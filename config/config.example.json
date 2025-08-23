@@ -1,0 +1,10 @@
+{
+    "email": "",
+    "password": "",
+    "headless": false,
+    "auto_login": false,
+    "book_url": "",
+    "mode": "auto",
+    "total_pages": 100,
+    "delay": 3
+}

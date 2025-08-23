@@ -35,3 +35,5 @@ logs/
 temp/
 *.tmp
 
+
+config/config.json

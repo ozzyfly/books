@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# 輸出檔案
+output/
+*.png
+*.jpg
+*.pdf
+
+# 設定檔案
+.env
+config/cookies.json
+
+# 日誌
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# 暫存檔案
+temp/
+*.tmp
+

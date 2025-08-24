@@ -80,32 +80,58 @@ class BooksCrawler:
         try:
             self.driver.get("https://www.books.com.tw/")
             
+            # 使用更精確的 XPath 定位登入按鈕
             login_button = self.wait.until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), '會員登入')]"))
+                EC.element_to_be_clickable((By.XPATH, "//li[contains(@class, 'li_label_member_login')]/a"))
             )
             login_button.click()
             logger.info("🖱️ 已點擊會員登入按鈕。")
 
-            login_iframe = self.wait.until(
-                EC.presence_of_element_located((By.ID, "login_iframe"))
-            )
-            self.driver.switch_to.frame(login_iframe)
-            logger.info("🔄 已切換到登入 iframe。")
+            # 登入表單現在位於新頁面，而非 iframe，因此移除 iframe 切換邏輯
+            logger.info("🔄 已導航至登入頁面，不需切換 iframe。")
 
             email_input = self.wait.until(
                 EC.presence_of_element_located((By.ID, "login_id"))
             )
             email_input.send_keys(self.email)
             
-            password_input = self.driver.find_element(By.ID, "login_pwd")
+            # 根據最終確認的頁面結構，使用最精準的 ID 'login_pswd' 定位密碼欄位
+            password_input = self.wait.until(
+                EC.presence_of_element_located((By.ID, "login_pswd"))
+            )
             password_input.send_keys(self.password)
             logger.info("🔑 已輸入帳號和密碼。")
 
-            submit_button = self.driver.find_element(By.ID, "login_btn")
+            # 根據最新頁面結構，使用正確的 ID 'show-captcha' 定位登入按鈕
+            submit_button = self.wait.until(
+                EC.element_to_be_clickable((By.ID, "show-captcha"))
+            )
             submit_button.click()
             logger.info("✅ 登入請求已送出。")
 
-            self.driver.switch_to.default_content()
+            # 新增：處理滑塊驗證碼
+            try:
+                # 等待滑塊驗證碼容器出現 (短暫等待)
+                slider_captcha_container = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "slider_captcha_main"))
+                )
+                if slider_captcha_container:
+                    logger.info("🧩 偵測到滑塊驗證碼。")
+                    print("\n" + "="*50)
+                    print("⚠️ 請手動完成瀏覽器中的滑塊驗證...")
+                    print("="*50)
+                    
+                    # 等待使用者手動完成驗證 (最長等待2分鐘)
+                    # 成功登入後頁面會跳轉，驗證碼元素也會因此失效 (stale)
+                    WebDriverWait(self.driver, 120).until(
+                        EC.staleness_of(slider_captcha_container)
+                    )
+                    logger.info("✅ 繼續執行...")
+
+            except Exception:
+                logger.info("ℹ️ 未偵測到滑塊驗證碼，或已自動通過。")
+
+            # 已不在 iframe 中，不需切換回 default_content
             self.wait.until(
                 EC.presence_of_element_located((By.XPATH, "//a[contains(text(), '會員專區')]"))
             )
@@ -120,15 +146,18 @@ class BooksCrawler:
         logger.info("正在檢查登入狀態...")
         self.driver.get("https://www.books.com.tw/")
         try:
-            # 檢查是否已經登入
-            self.wait.until(
-                EC.presence_of_element_located((By.XPATH, "//a[contains(text(), '會員專區')]"))
+            # 使用更長的等待時間和更精確的選擇器來檢查「會員登入」按鈕
+            login_element_xpath = "//li[contains(@class, 'li_label_member_login')]"
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, login_element_xpath))
             )
-            logger.info("✅ 使用者已登入。")
-            return True
+            logger.info("使用者尚未登入 (找到 '會員登入' 按鈕)。")
         except Exception:
-            logger.info("使用者尚未登入。")
+            # 如果在15秒內找不到「會員登入」按鈕，我們假設使用者已登入
+            logger.info("✅ 使用者已登入 (未找到 '會員登入' 按鈕)。")
+            return True
 
+        # --- 以下是登入流程 ---
         if auto_login and self.email and self.password:
             if self._perform_login():
                 return True
@@ -136,22 +165,25 @@ class BooksCrawler:
                 logger.error("自動登入失敗，請嘗試手動登入。")
 
         # 手動登入流程
-        login_choice = input("是否需要登入博客來？(y/n): ").strip().lower()
-        if login_choice == 'y':
-            self.driver.get("https://www.books.com.tw")
-            print("請在瀏覽器中手動登入...")
-            input("登入完成後按 Enter 繼續...")
-            # 再次檢查登入狀態
-            try:
-                self.wait.until(
-                    EC.presence_of_element_located((By.XPATH, "//a[contains(text(), '會員專區')]"))
-                )
-                logger.info("✅ 手動登入成功！")
-                return True
-            except Exception:
-                logger.error("❌ 手動登入失敗或未完成。")
-                return False
-        return False
+        logger.info("切換至手動登入流程。")
+        print("\n" + "="*50)
+        print("⚠️ 自動登入失敗或未設定，請在瀏覽器中手動登入...")
+        print("="*50)
+        input("登入完成後，請按 Enter 鍵繼續...")
+        
+        # 再次檢查登入狀態，確認「會員登入」按鈕已消失
+        try:
+            self.driver.refresh() # 刷新頁面以獲取最新的登入狀態
+            logger.info("頁面已刷新，正在重新確認登入狀態...")
+            login_element_xpath = "//li[contains(@class, 'li_label_member_login')]"
+            WebDriverWait(self.driver, 10).until_not(
+                EC.presence_of_element_located((By.XPATH, login_element_xpath))
+            )
+            logger.info("✅ 手動登入成功！")
+            return True
+        except Exception:
+            logger.error("❌ 手動登入失敗或未完成。")
+            return False
 
     def navigate_to_book(self, book_url):
         """導航到電子書頁面 - 改進版"""

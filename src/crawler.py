@@ -234,7 +234,7 @@ class BooksCrawler:
             logger.info("ℹ️ 未找到教學引導頁面，繼續執行。")
 
     def find_and_switch_to_ebook_iframe(self):
-        """精準定位並切換到電子書 iframe"""
+        """精準定位並切換到電子書 iframe，並驗證內部內容"""
         try:
             # 1. 處理教學引導
             self.handle_tutorial()
@@ -246,31 +246,74 @@ class BooksCrawler:
             
             try:
                 # 等待 iframe 出現
-                iframe_element = self.wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, iframe_selector))
-                )
-                
-                # 切換到 iframe
-                self.driver.switch_to.frame(iframe_element)
-                
-                # 3. 驗證 iframe 內部內容
-                # 等待一個比 <body> 更具體的元素，表示書籍已渲染
-                # 等待一個比 <body> 更具體的元素，表示書籍已渲染
+                # 策略更新：使用 'frame_to_be_available_and_switch_to_it'
+                # 這個條件會等待 iframe 存在並且可以被成功切換，一步到位解決時序問題。
                 self.wait.until(
-                    EC.visibility_of_element_located((By.CSS_SELECTOR, "div.epub-view"))
+                    EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, iframe_selector))
                 )
-                # time.sleep(2) # 已由 visibility_of_element_located 取代
-                logger.info("✅ 成功切換到電子書 iframe 並確認內容已載入。")
+                logger.info("✅ 已成功切換到電子書 iframe，正在驗證內部內容...")
+
+                # 3. 驗證 iframe 內部內容
+                #    此驗證邏輯現在是正確的，因為我們已經在 iframe 內部。
+                #    等待 body > div 的出現，確保 epub.js 已渲染內容。
+                self.wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "body > div"))
+                )
+                logger.info("✅ iframe 內部內容驗證成功。")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌ 未找到或無法切換到指定的電子書 iframe: {e}")
+                logger.error(f"❌ 未找到、無法切換或驗證電子書 iframe: {e}")
                 self.diagnose_page_structure() # 失敗時執行診斷
                 return False
 
         except Exception as e:
             logger.error(f"iframe 處理過程中發生嚴重錯誤: {e}", exc_info=True)
             return False
+
+    def diagnose_page_structure(self):
+        """當找不到指定的 iframe 時，執行此函式來診斷頁面結構。"""
+        logger.info("🕵️‍♂️ 開始進行頁面結構診斷...")
+
+        # 確保切換回主內容
+        self.driver.switch_to.default_content()
+
+        # 建立診斷檔案的儲存路徑
+        diag_dir = self.output_dir or Path("output/diagnostics")
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 儲存頁面原始碼
+        source_path = diag_dir / "page_source.html"
+        with open(source_path, "w", encoding="utf-8") as f:
+            f.write(self.driver.page_source)
+        logger.info(f"📄 頁面原始碼已儲存至: {source_path}")
+
+        # 儲存頁面截圖
+        screenshot_path = diag_dir / "diagnostic_screenshot.png"
+        self.driver.save_screenshot(str(screenshot_path))
+        logger.info(f"📸 診斷截圖已儲存至: {screenshot_path}")
+
+        # 尋找所有的 iframe 和 frame
+        frames = self.driver.find_elements(By.TAG_NAME, "iframe")
+        frames.extend(self.driver.find_elements(By.TAG_NAME, "frame"))
+
+        if frames:
+            logger.info(f"🖼️ 找到 {len(frames)} 個框架 (iframe/frame):")
+            for i, frame in enumerate(frames):
+                try:
+                    frame_id = frame.get_attribute('id')
+                    frame_name = frame.get_attribute('name')
+                    frame_src = frame.get_attribute('src')
+                    logger.info(
+                        f"  - 框架 {i+1}: "
+                        f"ID='{frame_id or 'N/A'}', "
+                        f"Name='{frame_name or 'N/A'}', "
+                        f"Src='{frame_src or 'N/A'}'"
+                    )
+                except Exception as e:
+                    logger.warning(f"  - 無法獲取框架 {i+1} 的屬性: {e}")
+        else:
+            logger.warning("⚠️ 在頁面上未找到任何 <iframe> 或 <frame> 元素。")
 
     def capture_page_with_retry(self, page_num, max_retries=3, full_page=False):
         """改進的截圖方法，包含重試機制，可選擇全頁截圖"""
@@ -279,16 +322,14 @@ class BooksCrawler:
                 logger.info(
                     f"📸 截圖第 {page_num} 頁 (嘗試 {attempt + 1}/{max_retries}) {'(全頁)' if full_page else ''}")
 
-                # 確保在正確的 frame 中
+                # 確保在正確的 frame 中 (此函式現在已包含內部驗證)
                 if not self.find_and_switch_to_ebook_iframe():
-                    # 如果找不到 iframe，嘗試截取整個頁面
+                    # 如果找不到 iframe，切換回主內容並嘗試截取整個頁面
                     self.driver.switch_to.default_content()
                     logger.warning("⚠️ 未能切換到電子書 iframe，將嘗試截取整個頁面。")
-
-                # 等待內容穩定
-                # 等待內容穩定
-                self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.epub-view")))
-                # time.sleep(2) # 已由 visibility_of_element_located 取代
+                    # 即使 iframe 失敗，仍繼續嘗試截圖主頁面，而不是直接失敗
+                
+                # 等待內容穩定的邏輯已移至 find_and_switch_to_ebook_iframe，此處不再需要
 
                 # 截圖路徑
                 screenshot_path = self.output_dir / f"page_{page_num:04d}.png"

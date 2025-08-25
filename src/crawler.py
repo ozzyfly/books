@@ -55,12 +55,16 @@ class BooksCrawler:
         options.set_preference('useAutomationExtension', False)
         options.set_preference("browser.tabs.remote.autostart", False)
         options.set_preference("browser.tabs.remote.autostart.2", False)
+        
+        # 新增：設定日誌偏好以捕獲控制台輸出
+        options.set_preference("devtools.console.stdout.content", True)
 
         # 禁用圖片載入加速（可選）
         # options.set_preference('permissions.default.image', 2)
 
         try:
-            service = Service(GeckoDriverManager().install())
+            # 將日誌導向到檔案
+            service = Service(GeckoDriverManager().install(), log_output='geckodriver.log')
             self.driver = webdriver.Firefox(service=service, options=options)
             self.wait = WebDriverWait(self.driver, 30)  # 增加等待時間
             self.driver.set_window_size(1920, 1080)
@@ -180,6 +184,7 @@ class BooksCrawler:
                 EC.presence_of_element_located((By.XPATH, login_element_xpath))
             )
             logger.info("✅ 手動登入成功！")
+            self._save_diagnostic_snapshot("manual_login_success")
             return True
         except Exception:
             logger.error("❌ 手動登入失敗或未完成。")
@@ -206,35 +211,96 @@ class BooksCrawler:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"輸出目錄: {self.output_dir}")
 
+    def _click_tutorial_next_button(self, selectors, step_count):
+        """
+        輔助函式：嘗試使用多個選擇器策略來尋找並點擊教學引導的「下一步」按鈕。
+
+        Args:
+            selectors (list): 一個包含 (By, value) 元組的列表，定義了多種尋找按鈕的策略。
+            step_count (int): 目前的步驟計數，主要用於日誌記錄和偵錯截圖。
+
+        Returns:
+            bool: 如果成功找到並點擊按鈕，返回 True；否則返回 False。
+        """
+        for by, value in selectors:
+            try:
+                # 使用 WebDriverWait 等待按鈕可被點擊，取代固定等待
+                button = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((by, value))
+                )
+                logger.info(f"🖱️ 找到教學按鈕 (策略: {by}='{value}')，正在點擊第 {step_count} 次...")
+                button.click()
+                
+                # 點擊後儲存截圖到正確的輸出目錄
+                if self.output_dir:
+                    screenshot_path = self.output_dir / f"tutorial_step_{step_count}.png"
+                    self.driver.save_screenshot(str(screenshot_path))
+                    logger.info(f"📸 已儲存教學步驟截圖: {screenshot_path.name}")
+                else:
+                    logger.warning("⚠️ output_dir 未設定，跳過教學步驟截圖。")
+
+                # 短暫等待動畫效果
+                time.sleep(0.5)
+                return True
+            except Exception:
+                # 如果這個選擇器失敗，繼續嘗試下一個
+                continue
+        return False
+
     def handle_tutorial(self):
-        """處理教學引導頁面"""
-        try:
-            self.driver.switch_to.default_content()
-            logger.info("🔄 正在檢查教學引導頁面...")
-            # 根據截圖，教學按鈕的 class 包含 "tutorial_button"
-            next_button_xpath = "//button[contains(@class, 'tutorial_button') or contains(text(), '下一步') or contains(@class, 'next-btn')]"
-            
-            # 增加等待時間，確保按鈕出現
-            self.wait.until(EC.presence_of_element_located((By.XPATH, next_button_xpath)))
-            
-            # 可能有多個教學步驟
-            for i in range(5): # 最多點擊5次
-                try:
-                    next_button = self.driver.find_element(By.XPATH, next_button_xpath)
-                    if next_button.is_displayed() and next_button.is_enabled():
-                        logger.info(f"🖱️ 點擊教學引導按鈕 (第 {i+1} 次)...")
-                        next_button.click()
-                        time.sleep(0.5) # 短暫等待動畫效果
-                    else:
-                        break # 按鈕不可見或不可用，跳出循環
-                except Exception:
-                    logger.info("✅ 教學引導頁面處理完畢或不存在。")
-                    break
-        except Exception:
-            logger.info("ℹ️ 未找到教學引導頁面，繼續執行。")
+        """
+        自動化處理電子書閱讀器初始可能出現的教學引導畫面。
+
+        此方法會：
+        1. 使用多種策略尋找「下一步」按鈕。
+        2. 持續點擊直到教學結束 (按鈕消失)。
+        3. 包含重試機制，以應對頁面載入延遲等問題。
+        """
+        max_retries = 3
+        for i in range(max_retries):
+            try:
+                self.driver.switch_to.default_content()
+                logger.info(f"🔄 正在檢查教學引導頁面... (第 {i + 1}/{max_retries} 次嘗試)")
+
+                # 定義多個可能的選擇器來尋找「下一步」按鈕
+                selectors = [
+                    (By.ID, "UIObj-demo-next-btn"),
+                    (By.CSS_SELECTOR, ".tutorial-next-button"),
+                    (By.XPATH, "//button[contains(text(), '下一步')]"),
+                    (By.XPATH, "//a[contains(text(), 'Next')]"),
+                    (By.CSS_SELECTOR, "div[class*='-next-btn']"),
+                ]
+                
+                step_count = 0
+                # 持續點擊「下一步」，直到找不到按鈕為止
+                while step_count < 10:  # 最多點擊10次以防無限迴圈
+                    step_count += 1
+                    if not self._click_tutorial_next_button(selectors, step_count):
+                        # 如果返回 False，表示所有選擇器都試過且找不到按鈕
+                        if step_count > 1:  # step_count 從 1 開始，所以 > 1 表示至少點擊過一次
+                            logger.info(f"✅ 教學引導處理完畢，總共點擊了 {step_count - 1} 次。")
+                        else:
+                            logger.info("ℹ️ 未找到任何教學引導按鈕，繼續執行。")
+                        break  # 跳出 while 迴圈
+                
+                logger.info(f"✅ 第 {i + 1} 次嘗試成功，結束教學引導處理。")
+                return  # 成功處理後，結束整個函式
+
+            except Exception as e:
+                logger.warning(f"❌ 處理教學引導時發生錯誤 (第 {i + 1} 次嘗試): {e}")
+                if i < max_retries - 1:
+                    logger.info("🔄 正在重新整理頁面並重試...")
+                    self.driver.refresh()
+                    time.sleep(5)  # 等待頁面重新載入
+                else:
+                    logger.error(f"❌ 在 {max_retries} 次嘗試後，處理教學引導失敗。")
+                    # 使用一致的診斷快照功能
+                    self._save_diagnostic_snapshot("tutorial_handling_failed")
+                    logger.info("ℹ️ 將繼續執行後續步驟...")
 
     def find_and_switch_to_ebook_iframe(self):
         """精準定位並切換到電子書 iframe，並驗證內部內容"""
+        self.driver.switch_to.default_content()
         try:
             # 1. 處理教學引導
             self.handle_tutorial()
@@ -444,9 +510,37 @@ class BooksCrawler:
             logger.error(f"翻頁失敗: {e}")
             return False
 
+    def _save_diagnostic_snapshot(self, filename_prefix):
+        """儲存當前頁面的截圖和 HTML 原始碼以供診斷。"""
+        try:
+            # 確保輸出資料夾存在
+            if not self.output_dir:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.output_dir = Path(f"output/ebook_{timestamp}")
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"建立診斷輸出目錄: {self.output_dir}")
+
+            # 定義檔案路徑
+            png_path = self.output_dir / f"{filename_prefix}.png"
+            html_path = self.output_dir / f"{filename_prefix}.html"
+
+            # 儲存截圖
+            self.driver.save_screenshot(str(png_path))
+            
+            # 儲存 HTML
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            
+            # 移除無效的 get_log 方法，改為提示使用者檢查主日誌檔
+            logger.info("ℹ️ 瀏覽器控制台日誌已重定向到專案根目錄下的 `geckodriver.log` 檔案。")
+            
+            logger.info(f"📸 快照已儲存: {png_path.name}, {html_path.name}")
+
+        except Exception as e:
+            logger.error(f"❌ 儲存診斷快照失敗 ({filename_prefix}): {e}")
 
     def auto_capture_mode(self, total_pages=100, delay=5):
-        """自動截圖模式"""
+        """自動截圖模式 - 重寫版"""
         print("\n" + "="*60)
         print("📸 自動截圖模式")
         print("="*60)
@@ -455,33 +549,51 @@ class BooksCrawler:
         print("="*60)
         input("\n✅ 準備好後按 Enter 開始...")
 
+        # 確保已切換到 iframe
+        if not self.find_and_switch_to_ebook_iframe():
+            logger.error("❌ 無法開始截圖，因為找不到電子書 iframe。")
+            return
+
+        # 互動式提示：在所有準備工作完成後，給予使用者手動開始的機會
+        # 這提供了一個檢查點，讓使用者可以在截圖前確認瀏覽器狀態是否正常
+        user_input = input("✅ 已完成登入與教學引導，是否開始截圖？ (y/n): ").lower()
+        if user_input != 'y':
+            print("使用者取消操作，程式即將結束。")
+            self.close()
+            return
+
+        self.total_pages = total_pages
+        self.current_page = 1
         successful_pages = 0
         failed_pages = []
 
-        for page_num in range(1, total_pages + 1):
-            print(f"\n進度: [{page_num}/{total_pages}]")
+        while self.current_page <= self.total_pages:
+            print(f"\n進度: [{self.current_page}/{self.total_pages}]")
 
             # 截圖當前頁面
-            if self.capture_page_with_retry(page_num):
+            if self.capture_page_with_retry(self.current_page):
                 successful_pages += 1
             else:
-                failed_pages.append(page_num)
-                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
+                failed_pages.append(self.current_page)
+                logger.error(f"❌ 第 {self.current_page} 頁截圖失敗")
 
             # 如果不是最後一頁，執行翻頁
-            if page_num < total_pages:
+            if self.current_page < self.total_pages:
                 print(f"等待 {delay} 秒後翻頁...")
                 time.sleep(delay)
 
-                if not self.smart_next_page():
-                    logger.warning("翻頁可能失敗，繼續嘗試...")
-                
-                # 等待新頁面載入完成
+                # 直接在 iframe 的 body 上發送向右鍵事件
                 try:
-                    self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.epub-view")))
-                    logger.info("✅ 新頁面已載入。")
-                except Exception:
-                    logger.warning("⚠️ 等待新頁面載入超時。")
+                    body = self.driver.find_element(By.TAG_NAME, "body")
+                    ActionChains(self.driver).send_keys_to_element(body, Keys.ARROW_RIGHT).perform()
+                    logger.info("✅ 已發送翻頁指令 (ARROW_RIGHT)。")
+                    # 短暫等待頁面渲染
+                    time.sleep(1)
+                except Exception as e:
+                    logger.error(f"❌ 發送翻頁指令失敗: {e}")
+                    # 即使翻頁失敗，也繼續嘗試下一頁的截圖
+            
+            self.current_page += 1
 
         # 顯示結果摘要
         print("\n" + "="*60)

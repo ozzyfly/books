@@ -73,7 +73,16 @@ def main():
         # 導航到書籍頁面
         crawler.navigate_to_book(book_url)
 
-        # 直接執行自動截圖模式
+        # 互動式提示，詢問使用者是否開始截圖
+        print("\n📸 截圖準備")
+        print("-" * 40)
+        user_input = input("已完成前置作業，是否開始截圖？ (y/n): ").lower().strip()
+        if user_input != 'y':
+            logger.info("使用者取消操作，程式即將結束。")
+            print("使用者取消操作，程式即將結束。")
+            return
+
+        # 執行自動截圖模式
         total_pages = config.get("total_pages", 100)
         delay = config.get("delay", 5)
         crawler.auto_capture_mode(total_pages, delay)

@@ -15,67 +15,86 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.firefox.service import Service
-from webdriver_manager.firefox import GeckoDriverManager
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.service import Service as EdgeService
+from selenium.webdriver.firefox.service import Service as FirefoxService
 
 logger = logging.getLogger(__name__)
 
 
 class BooksCrawler:
-    def __init__(self, email=None, password=None, headless=False, full_page_screenshot=False):
-        self.email = email
-        self.password = password
+    def __init__(self, config):
+        self.config = config
+        self.email = self.config.get('email')
+        self.password = self.config.get('password')
+        self.headless = self.config.get('headless', False)
         self.driver = None
         self.wait = None
         self.output_dir = None
         self.main_iframe = None
-        self.full_page_screenshot = full_page_screenshot # 新增全頁截圖設定
-        self.setup_driver(headless)
+        self.full_page_screenshot = self.config.get('full_page_screenshot', False)
+        self.setup_driver()
 
-    def setup_driver(self, headless=False):
-        """Firefox WebDriver 設定 - 優化版"""
-        logger.info("使用 Firefox WebDriver - 優化版")
-
-        options = webdriver.FirefoxOptions()
-        options.add_argument('--width=1920')
-        options.add_argument('--height=1080')
-
-        if platform.system() == "Darwin":
-            options.set_preference("browser.privatebrowsing.autostart", False)
-            options.set_preference("browser.download.folderList", 2)
-            options.set_preference(
-                "browser.download.manager.showWhenStarting", False)
-
-        if headless:
-            options.add_argument('--headless')
-            logger.info("啟用無頭模式")
-
-        # 優化設定
-        options.set_preference("dom.webdriver.enabled", False)
-        options.set_preference('useAutomationExtension', False)
-        options.set_preference("browser.tabs.remote.autostart", False)
-        options.set_preference("browser.tabs.remote.autostart.2", False)
-        
-        # 新增：設定日誌偏好以捕獲控制台輸出
-        options.set_preference("devtools.console.stdout.content", True)
-
-        # 禁用圖片載入加速（可選）
-        # options.set_preference('permissions.default.image', 2)
+    def setup_driver(self):
+        """根據設定檔動態設定 WebDriver"""
+        browser = self.config.get('browser', 'firefox').lower()
+        logger.info(f"使用 {browser.capitalize()} WebDriver")
 
         try:
-            # 將日誌導向到檔案
-            service = Service(GeckoDriverManager().install(), log_output='geckodriver.log')
-            self.driver = webdriver.Firefox(service=service, options=options)
-            self.wait = WebDriverWait(self.driver, 30)  # 增加等待時間
-            self.driver.set_window_size(1920, 1080)
+            if browser == 'chrome':
+                options = webdriver.ChromeOptions()
+                options.add_argument('--window-size=1920,1080')
+                if self.headless:
+                    options.add_argument('--headless')
+                service = ChromeService()
+                self.driver = webdriver.Chrome(service=service, options=options)
 
-            # 設定頁面載入策略
+            elif browser == 'edge':
+                options = webdriver.EdgeOptions()
+                options.add_argument('--window-size=1920,1080')
+                if self.headless:
+                    options.add_argument('--headless')
+                webdriver_path = self.config.get('webdriver_path')
+                # 檢查使用者是否在 config.json 中手動指定了 WebDriver 的路徑。
+                # 這是為了解決 Selenium Manager 在某些網路環境（例如有特殊 DNS 設定或防火牆）
+                # 下自動下載 WebDriver 失敗的問題。
+                # 如果提供了有效的路徑，則使用該路徑來初始化 WebDriver 服務。
+                if webdriver_path and os.path.exists(webdriver_path):
+                    logger.info(f"使用指定的 WebDriver: {webdriver_path}")
+                    service = EdgeService(executable_path=webdriver_path)
+                else:
+                    # 如果未提供路徑或路徑無效，則退回使用 Selenium Manager 的預設行為，
+                    # 它會嘗試自動下載並管理 WebDriver。
+                    logger.info("未指定或找不到 WebDriver 路徑，將使用 Selenium Manager。")
+                    service = EdgeService()
+                self.driver = webdriver.Edge(service=service, options=options)
+
+            else:  # Default to firefox
+                options = webdriver.FirefoxOptions()
+                options.add_argument('--width=1920')
+                options.add_argument('--height=1080')
+                if self.headless:
+                    options.add_argument('--headless')
+                
+                # Firefox 優化設定
+                options.set_preference("dom.webdriver.enabled", False)
+                options.set_preference('useAutomationExtension', False)
+                
+                service = FirefoxService(log_output='geckodriver.log')
+                self.driver = webdriver.Firefox(service=service, options=options)
+
+            self.wait = WebDriverWait(self.driver, 30)
             self.driver.set_page_load_timeout(60)
 
-            logger.info("✅ Firefox WebDriver 啟動成功")
+            logger.info(f"✅ {browser.capitalize()} WebDriver 啟動成功")
 
         except Exception as e:
-            logger.error(f"❌ Firefox WebDriver 啟動失敗: {e}")
+            logger.error(f"❌ {browser.capitalize()} WebDriver 啟動失敗: {e}")
+            if "Could not reach host" in str(e):
+                logger.error("="*60)
+                logger.error("無法下載 WebDriver，這通常是網路連線問題。")
+                logger.error("請檢查您的網路連線、DNS 設定或防火牆。")
+                logger.error("="*60)
             raise
 
     def _perform_login(self):

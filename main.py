@@ -45,12 +45,7 @@ def main():
     try:
         # 建立爬蟲實例
         print("🚀 啟動瀏覽器...")
-        crawler = BooksCrawler(
-            email=config.get('email'),
-            password=config.get('password'),
-            headless=config.get('headless', False),
-            full_page_screenshot=config.get('full_page_screenshot', False)
-        )
+        crawler = BooksCrawler(config)
 
         # 登入流程
         print("\n📝 登入流程")

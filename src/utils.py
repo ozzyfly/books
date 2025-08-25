@@ -37,6 +37,7 @@ def load_config():
         "email": "",
         "password": "",
         "headless": False,
+        "browser": "firefox",
         "auto_login": False,
         "book_url": "",
         "total_pages": 100,

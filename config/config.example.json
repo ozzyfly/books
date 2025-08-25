@@ -2,6 +2,7 @@
     "email": "",
     "password": "",
     "headless": false,
+    "browser": "edge",
     "auto_login": false,
     "book_url": "",
     "mode": "auto",

@@ -89,7 +89,7 @@ class BooksCrawler:
                 service = FirefoxService(log_output='geckodriver.log')
                 self.driver = webdriver.Firefox(service=service, options=options)
 
-            self.wait = WebDriverWait(self.driver, 30)
+            self.wait = WebDriverWait(self.driver, 10)
             self.driver.set_page_load_timeout(60)
 
             logger.info(f"✅ {browser.capitalize()} WebDriver 啟動成功")
@@ -303,7 +303,7 @@ class BooksCrawler:
                     logger.warning("⚠️ output_dir 未設定，跳過教學步驟截圖。")
 
                 # 短暫等待動畫效果
-                time.sleep(0.5)
+                time.sleep(0.2)
                 return True
             except Exception:
                 # 如果這個選擇器失敗，繼續嘗試下一個
@@ -503,7 +503,7 @@ class BooksCrawler:
             while current_position < total_height:
                 # 滾動到當前位置
                 self.driver.execute_script(f"window.scrollTo(0, {current_position});")
-                time.sleep(0.5) # 等待滾動和渲染
+                time.sleep(0.2) # 等待滾動和渲染
 
                 # 截圖當前可視區域
                 temp_screenshot_path = self.output_dir / "temp_part.png"

@@ -22,7 +22,7 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.firefox.service import Service as FirefoxService
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 
 class BooksCrawler:
@@ -47,6 +47,22 @@ class BooksCrawler:
             if browser == 'chrome':
                 options = webdriver.ChromeOptions()
                 options.add_argument('--window-size=1920,1080')
+                options.add_argument('--disable-extensions')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-infobars')
+                options.add_argument('--disable-notifications')
+                options.add_argument('--disable-blink-features=AutomationControlled')
+                options.add_argument('--disable-animations')
+                options.add_experimental_option('prefs', {
+                    'profile.default_content_setting_values.notifications': 2,
+                    'profile.default_content_setting_values.automatic_downloads': 1,
+                    'profile.default_content_setting_values.popups': 2,
+                    'profile.default_content_setting_values.geolocation': 2,
+                    'profile.default_content_setting_values.media_stream': 2,
+                    'profile.default_content_setting_values.plugins': 2,
+                    'profile.default_content_setting_values.images': 2
+                })
                 if self.headless:
                     options.add_argument('--headless')
                 service = ChromeService()
@@ -59,6 +75,10 @@ class BooksCrawler:
                 options.add_argument('--disable-gpu')
                 options.add_argument('--disable-dev-shm-usage')
                 options.add_argument('--disable-extensions')
+                options.add_argument('--disable-infobars')
+                options.add_argument('--disable-notifications')
+                options.add_argument('--disable-blink-features=AutomationControlled')
+                options.add_argument('--disable-animations')
                 options.add_argument('--remote-debugging-port=9222')
                 if self.headless:
                     options.add_argument('--headless')
@@ -81,13 +101,19 @@ class BooksCrawler:
                 options = webdriver.FirefoxOptions()
                 options.add_argument('--width=1920')
                 options.add_argument('--height=1080')
+                options.set_preference('dom.webnotifications.enabled', False)
+                options.set_preference('dom.disable_open_during_load', True)
+                options.set_preference('permissions.default.image', 2)
+                options.set_preference('dom.ipc.plugins.enabled', False)
+                options.set_preference('dom.ipc.plugins.flash.subprocess.crashreporter.enabled', False)
+                options.set_preference('dom.ipc.plugins.reportCrashURL', False)
+                options.set_preference('browser.tabs.animate', False)
+                options.set_preference('toolkit.cosmeticAnimations.enabled', False)
                 if self.headless:
                     options.add_argument('--headless')
-                
                 # Firefox 優化設定
                 options.set_preference("dom.webdriver.enabled", False)
                 options.set_preference('useAutomationExtension', False)
-                
                 service = FirefoxService(log_output='geckodriver.log')
                 self.driver = webdriver.Firefox(service=service, options=options)
 
@@ -105,13 +131,141 @@ class BooksCrawler:
                 logger.error("="*60)
             raise
 
-    def login(self):
+    def login(self, auto_captcha=False):
         """
         執行一個線性的、無條件的登入流程。
         該流程會自動點擊登入、填寫帳號密碼，然後暫停，等待使用者手動處理 CAPTCHA。
         """
         logger.info("🚀 開始執行線性登入流程...")
         self.driver.get("https://www.books.com.tw/")
+
+        try:
+            # 步驟 0：處理彈出式視窗
+            try:
+                logger.info("步驟 0/5：檢查彈出式視窗...")
+                close_selectors = [
+                    (By.ID, "close_top_banner"),
+                    (By.CSS_SELECTOR, "button.close"),
+                    (By.XPATH, "//button[contains(text(), '關閉')]")
+                ]
+                for by, value in close_selectors:
+                    try:
+                        close_button = WebDriverWait(self.driver, 2).until(
+                            EC.element_to_be_clickable((by, value))
+                        )
+                        close_button.click()
+                        logger.info(f"✅ 步驟 0/5：偵測到並關閉彈窗 ({by}, {value})。")
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                logger.info("ℹ️ 步驟 0/5：未偵測到彈出式視窗，繼續執行。")
+
+            # 步驟一：點擊「會員登入」
+            logger.info("步驟 1/5：等待『會員登入』按鈕...")
+            login_selectors = [
+                (By.CSS_SELECTOR, "span.member_class_name"),
+                (By.LINK_TEXT, "會員登入"),
+                (By.XPATH, "//span[contains(text(), '會員登入')]")
+            ]
+            login_link = None
+            for by, value in login_selectors:
+                try:
+                    login_link = self.driver.find_element(by, value)
+                    login_link.click()
+                    break
+                except Exception:
+                    continue
+            if not login_link:
+                logger.error("❌ 找不到『會員登入』按鈕。")
+                self._save_diagnostic_snapshot("login_no_login_button")
+                return False
+
+            # 步驟二：填寫帳號
+            logger.info("步驟 2/5：等待帳號輸入框...")
+            username_selectors = [
+                (By.ID, "login_id_width01"),
+                (By.NAME, "login_id"),
+                (By.CSS_SELECTOR, "input[type='text']")
+            ]
+            username_input = None
+            for by, value in username_selectors:
+                try:
+                    username_input = self.driver.find_element(by, value)
+                    username_input.clear()
+                    email_value = self.email or self.config.get("email")
+                    if not email_value:
+                        logger.error("❌ 未設定 email，請檢查 config.json。")
+                        return False
+                    username_input.send_keys(email_value)
+                    break
+                except Exception:
+                    continue
+            if not username_input:
+                logger.error("❌ 找不到帳號輸入框。")
+                self._save_diagnostic_snapshot("login_no_username_input")
+                return False
+
+            # 步驟三：填寫密碼
+            logger.info("步驟 3/5：等待密碼輸入框...")
+            password_selectors = [
+                (By.ID, "login_pswd"),
+                (By.NAME, "login_pswd"),
+                (By.CSS_SELECTOR, "input[type='password']")
+            ]
+            password_input = None
+            for by, value in password_selectors:
+                try:
+                    password_input = self.driver.find_element(by, value)
+                    password_input.clear()
+                    password_input.send_keys(self.config["password"])
+                    break
+                except Exception:
+                    continue
+            if not password_input:
+                logger.error("❌ 找不到密碼輸入框。")
+                self._save_diagnostic_snapshot("login_no_password_input")
+                return False
+
+            # 步驟四：點擊「登入」按鈕以觸發 CAPTCHA
+            logger.info("步驟 4/5：等待『登入』按鈕...")
+            login_btn_selectors = [
+                (By.ID, "show-captcha"),
+                (By.ID, "login_btn"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(text(), '登入')]")
+            ]
+            login_button = None
+            for by, value in login_btn_selectors:
+                try:
+                    login_button = self.driver.find_element(by, value)
+                    login_button.click()
+                    break
+                except Exception:
+                    continue
+            if not login_button:
+                logger.error("❌ 找不到『登入』按鈕。")
+                self._save_diagnostic_snapshot("login_no_login_btn")
+                return False
+
+            # 步驟五：人工確認 CAPTCHA 驗證（僅主進程）
+            if not auto_captcha:
+                print("\n" + "="*60)
+                print("🤖 已自動填寫帳密並觸發驗證。")
+                print("請在瀏覽器中手動完成 CAPTCHA 驗證，完成後請按 Enter 繼續...")
+                print("="*60)
+                input() # 等待使用者按 Enter
+                logger.info("🎉 使用者已確認完成手動驗證，繼續執行。")
+            return True
+
+        except TimeoutException as e:
+            logger.error(f"❌ 登入流程中的某個元素等待逾時: {e}", exc_info=True)
+            self._save_diagnostic_snapshot("login_timeout_failure")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 登入流程失敗: {e}", exc_info=True)
+            self._save_diagnostic_snapshot("login_generic_failure")
+            return False
 
         try:
             # 步驟 0：處理彈出式視窗
@@ -224,13 +378,7 @@ class BooksCrawler:
 
             # 步驟五：等待使用者介入
             logger.info("步驟 5/5：暫停程式，等待使用者手動處理 CAPTCHA...")
-            print("\n" + "="*60)
-            print("🤖 已自動填寫帳密並觸發驗證。")
-            print("請在瀏覽器中手動完成 CAPTCHA，然後回到此處按下 Enter 鍵繼續...")
-            print("="*60)
-            input() # 等待使用者按 Enter
-
-            logger.info("🎉 使用者已確認完成手動驗證，繼續執行。")
+            # CAPTCHA 驗證步驟已略過，流程自動繼續
             return True
 
         except TimeoutException as e:
@@ -592,18 +740,10 @@ class BooksCrawler:
         print("="*60)
         print(f"⏱️ 每頁間隔 {delay} 秒")
         print("="*60)
-        input("\n✅ 準備好後按 Enter 開始...")
-
+        print("\n✅ 已自動開始截圖流程...")
         # 確保已切換到 iframe
         if not self.find_and_switch_to_ebook_iframe():
             logger.error("❌ 無法開始截圖，因為找不到電子書 iframe。")
-            return
-
-        # 互動式提示：在所有準備工作完成後，給予使用者手動開始的機會
-        user_input = input("✅ 已完成登入與教學引導，是否開始截圖？ (y/n): ").lower()
-        if user_input != 'y':
-            print("使用者取消操作，程式即將結束。")
-            self.close()
             return
 
         page_num = 1
@@ -622,7 +762,6 @@ class BooksCrawler:
 
             # 智慧分頁邏輯：嘗試尋找並點擊下一頁按鈕，如果找不到則結束
             try:
-                logger.info("🔍 正在尋找下一頁按鈕...")
                 self.driver.switch_to.default_content()
                 next_buttons_xpaths = [
                     "//button[contains(@class, 'next')]",
@@ -642,13 +781,11 @@ class BooksCrawler:
                     except Exception:
                         continue
                 if not next_button_found:
-                    logger.info("ℹ️ 找不到可點擊的下一頁按鈕，假設已到達最後一頁。")
                     break
                 print(f"等待 {delay} 秒後截取下一頁...")
                 time.sleep(delay)
                 page_num += 1
             except Exception as e:
-                logger.info(f"ℹ️ 翻頁時發生未知錯誤，結束截圖。錯誤: {e}")
                 break
 
         # 顯示結果摘要

@@ -50,9 +50,7 @@ def main():
         # 登入流程
         print("\n📝 登入流程")
         print("-" * 40)
-        if not crawler.ensure_login(auto_login=config.get('auto_login', False)):
-            logger.error("登入失敗，程式無法繼續。")
-            return
+        crawler.login()
 
         # 取得書籍網址
         print("\n📖 電子書設定")

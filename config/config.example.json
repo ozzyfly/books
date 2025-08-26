@@ -1,11 +1,9 @@
 {
-    "email": "",
+    "username": "",
     "password": "",
     "headless": false,
     "browser": "edge",
-    "auto_login": false,
     "book_url": "",
     "mode": "auto",
-    "total_pages": 100,
     "delay": 3
 }

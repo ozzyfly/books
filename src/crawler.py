@@ -10,6 +10,7 @@ from datetime import datetime
 from PIL import Image # 新增 Image 模組
 
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class BooksCrawler:
     def __init__(self, config):
         self.config = config
-        self.email = self.config.get('email')
+        self.email = self.config.get('email')  # 修改為 email
         self.password = self.config.get('password')
         self.headless = self.config.get('headless', False)
         self.driver = None
@@ -52,6 +53,11 @@ class BooksCrawler:
             elif browser == 'edge':
                 options = webdriver.EdgeOptions()
                 options.add_argument('--window-size=1920,1080')
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-extensions')
+                options.add_argument('--remote-debugging-port=9222')
                 if self.headless:
                     options.add_argument('--headless')
                 webdriver_path = self.config.get('webdriver_path')
@@ -97,116 +103,154 @@ class BooksCrawler:
                 logger.error("="*60)
             raise
 
-    def _perform_login(self):
-        """執行實際的登入操作"""
-        logger.info("🚀 開始自動登入...")
-        try:
-            self.driver.get("https://www.books.com.tw/")
-            
-            # 使用更精確的 XPath 定位登入按鈕
-            login_button = self.wait.until(
-                EC.element_to_be_clickable((By.XPATH, "//li[contains(@class, 'li_label_member_login')]/a"))
-            )
-            login_button.click()
-            logger.info("🖱️ 已點擊會員登入按鈕。")
-
-            # 登入表單現在位於新頁面，而非 iframe，因此移除 iframe 切換邏輯
-            logger.info("🔄 已導航至登入頁面，不需切換 iframe。")
-
-            email_input = self.wait.until(
-                EC.presence_of_element_located((By.ID, "login_id"))
-            )
-            email_input.send_keys(self.email)
-            
-            # 根據最終確認的頁面結構，使用最精準的 ID 'login_pswd' 定位密碼欄位
-            password_input = self.wait.until(
-                EC.presence_of_element_located((By.ID, "login_pswd"))
-            )
-            password_input.send_keys(self.password)
-            logger.info("🔑 已輸入帳號和密碼。")
-
-            # 根據最新頁面結構，使用正確的 ID 'show-captcha' 定位登入按鈕
-            submit_button = self.wait.until(
-                EC.element_to_be_clickable((By.ID, "show-captcha"))
-            )
-            submit_button.click()
-            logger.info("✅ 登入請求已送出。")
-
-            # 新增：處理滑塊驗證碼
-            try:
-                # 等待滑塊驗證碼容器出現 (短暫等待)
-                slider_captcha_container = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "slider_captcha_main"))
-                )
-                if slider_captcha_container:
-                    logger.info("🧩 偵測到滑塊驗證碼。")
-                    print("\n" + "="*50)
-                    print("⚠️ 請手動完成瀏覽器中的滑塊驗證...")
-                    print("="*50)
-                    
-                    # 等待使用者手動完成驗證 (最長等待2分鐘)
-                    # 成功登入後頁面會跳轉，驗證碼元素也會因此失效 (stale)
-                    WebDriverWait(self.driver, 120).until(
-                        EC.staleness_of(slider_captcha_container)
-                    )
-                    logger.info("✅ 繼續執行...")
-
-            except Exception:
-                logger.info("ℹ️ 未偵測到滑塊驗證碼，或已自動通過。")
-
-            # 已不在 iframe 中，不需切換回 default_content
-            self.wait.until(
-                EC.presence_of_element_located((By.XPATH, "//a[contains(text(), '會員專區')]"))
-            )
-            logger.info("🎉 登入成功！")
-            return True
-        except Exception as e:
-            logger.error(f"❌ 自動登入失敗: {e}", exc_info=True)
-            return False
-
-    def ensure_login(self, auto_login=False):
-        """確保使用者已登入"""
-        logger.info("正在檢查登入狀態...")
+    def login(self):
+        """
+        執行一個線性的、無條件的登入流程。
+        該流程會自動點擊登入、填寫帳號密碼，然後暫停，等待使用者手動處理 CAPTCHA。
+        """
+        logger.info("🚀 開始執行線性登入流程...")
         self.driver.get("https://www.books.com.tw/")
+
         try:
-            # 使用更長的等待時間和更精確的選擇器來檢查「會員登入」按鈕
-            login_element_xpath = "//li[contains(@class, 'li_label_member_login')]"
-            WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, login_element_xpath))
-            )
-            logger.info("使用者尚未登入 (找到 '會員登入' 按鈕)。")
-        except Exception:
-            # 如果在15秒內找不到「會員登入」按鈕，我們假設使用者已登入
-            logger.info("✅ 使用者已登入 (未找到 '會員登入' 按鈕)。")
+            # 步驟 0：處理彈出式視窗
+            try:
+                logger.info("步驟 0/5：檢查彈出式視窗...")
+                close_selectors = [
+                    (By.ID, "close_top_banner"),
+                    (By.CSS_SELECTOR, "button.close"),
+                    (By.XPATH, "//button[contains(text(), '關閉')]"),
+                ]
+                for by, value in close_selectors:
+                    try:
+                        close_button = WebDriverWait(self.driver, 5).until(
+                            EC.element_to_be_clickable((by, value))
+                        )
+                        close_button.click()
+                        logger.info(f"✅ 步驟 0/5：偵測到並關閉彈窗 ({by}, {value})。")
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                logger.info("ℹ️ 步驟 0/5：未偵測到彈出式視窗，繼續執行。")
+
+            # 步驟一：點擊「會員登入」
+            logger.info("步驟 1/5：等待『會員登入』按鈕...")
+            login_selectors = [
+                (By.CSS_SELECTOR, "span.member_class_name"),
+                (By.LINK_TEXT, "會員登入"),
+                (By.XPATH, "//span[contains(text(), '會員登入')]")
+            ]
+            login_link = None
+            for by, value in login_selectors:
+                try:
+                    login_link = self.wait.until(
+                        EC.element_to_be_clickable((by, value))
+                    )
+                    login_link.click()
+                    logger.info(f"✅ 步驟 1/5：已點擊『會員登入』 ({by}, {value})。")
+                    break
+                except Exception:
+                    continue
+            if not login_link:
+                logger.error("❌ 找不到『會員登入』按鈕。")
+                self._save_diagnostic_snapshot("login_no_login_button")
+                return False
+
+            # 步驟二：填寫帳號
+            logger.info("步驟 2/5：等待帳號輸入框...")
+            username_selectors = [
+                (By.ID, "login_id_width01"),
+                (By.NAME, "login_id"),
+                (By.CSS_SELECTOR, "input[type='text']")
+            ]
+            username_input = None
+            for by, value in username_selectors:
+                try:
+                    username_input = self.wait.until(
+                        EC.element_to_be_clickable((by, value))
+                    )
+                    username_input.clear()
+                    # 使用 self.email 作為帳號
+                    email_value = self.email or self.config.get("email")
+                    if not email_value:
+                        logger.error("❌ 未設定 email，請檢查 config.json。")
+                        return False
+                    username_input.send_keys(email_value)
+                    logger.info(f"✅ 步驟 2/5：帳號已填寫 ({by}, {value})。")
+                    break
+                except Exception:
+                    continue
+            if not username_input:
+                logger.error("❌ 找不到帳號輸入框。")
+                self._save_diagnostic_snapshot("login_no_username_input")
+                return False
+
+            # 步驟三：填寫密碼
+            logger.info("步驟 3/5：等待密碼輸入框...")
+            password_selectors = [
+                (By.ID, "login_pswd"),
+                (By.NAME, "login_pswd"),
+                (By.CSS_SELECTOR, "input[type='password']")
+            ]
+            password_input = None
+            for by, value in password_selectors:
+                try:
+                    password_input = self.wait.until(
+                        EC.element_to_be_clickable((by, value))
+                    )
+                    password_input.clear()
+                    password_input.send_keys(self.config["password"])
+                    logger.info(f"✅ 步驟 3/5：密碼已填寫 ({by}, {value})。")
+                    break
+                except Exception:
+                    continue
+            if not password_input:
+                logger.error("❌ 找不到密碼輸入框。")
+                self._save_diagnostic_snapshot("login_no_password_input")
+                return False
+
+            # 步驟四：點擊「登入」按鈕以觸發 CAPTCHA
+            logger.info("步驟 4/5：等待『登入』按鈕...")
+            login_btn_selectors = [
+                (By.ID, "show-captcha"),
+                (By.ID, "login_btn"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(text(), '登入')]")
+            ]
+            login_button = None
+            for by, value in login_btn_selectors:
+                try:
+                    login_button = self.wait.until(
+                        EC.element_to_be_clickable((by, value))
+                    )
+                    login_button.click()
+                    logger.info(f"✅ 步驟 4/5：已點擊『登入』 ({by}, {value})，觸發 CAPTCHA。")
+                    break
+                except Exception:
+                    continue
+            if not login_button:
+                logger.error("❌ 找不到『登入』按鈕。")
+                self._save_diagnostic_snapshot("login_no_login_btn")
+                return False
+
+            # 步驟五：等待使用者介入
+            logger.info("步驟 5/5：暫停程式，等待使用者手動處理 CAPTCHA...")
+            print("\n" + "="*60)
+            print("🤖 已自動填寫帳密並觸發驗證。")
+            print("請在瀏覽器中手動完成 CAPTCHA，然後回到此處按下 Enter 鍵繼續...")
+            print("="*60)
+            input() # 等待使用者按 Enter
+
+            logger.info("🎉 使用者已確認完成手動驗證，繼續執行。")
             return True
 
-        # --- 以下是登入流程 ---
-        if auto_login and self.email and self.password:
-            if self._perform_login():
-                return True
-            else:
-                logger.error("自動登入失敗，請嘗試手動登入。")
-
-        # 手動登入流程
-        logger.info("切換至手動登入流程。")
-        print("\n" + "="*50)
-        print("⚠️ 自動登入失敗或未設定，請在瀏覽器中手動登入...")
-        print("="*50)
-        input("登入完成後，請按 Enter 鍵繼續...")
-        
-        # 再次檢查登入狀態，確認「會員登入」按鈕已消失
-        try:
-            self.driver.refresh() # 刷新頁面以獲取最新的登入狀態
-            logger.info("頁面已刷新，正在重新確認登入狀態...")
-            login_element_xpath = "//li[contains(@class, 'li_label_member_login')]"
-            WebDriverWait(self.driver, 10).until_not(
-                EC.presence_of_element_located((By.XPATH, login_element_xpath))
-            )
-            logger.info("✅ 手動登入成功！")
-            self._save_diagnostic_snapshot("manual_login_success")
-            return True
-        except Exception:
-            logger.error("❌ 手動登入失敗或未完成。")
+        except TimeoutException as e:
+            logger.error(f"❌ 登入流程中的某個元素等待逾時: {e}", exc_info=True)
+            self._save_diagnostic_snapshot("login_timeout_failure")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 登入流程失敗: {e}", exc_info=True)
+            self._save_diagnostic_snapshot("login_generic_failure")
             return False
 
     def navigate_to_book(self, book_url):
@@ -558,12 +602,11 @@ class BooksCrawler:
         except Exception as e:
             logger.error(f"❌ 儲存診斷快照失敗 ({filename_prefix}): {e}")
 
-    def auto_capture_mode(self, total_pages=100, delay=5):
-        """自動截圖模式 - 重寫版"""
+    def auto_capture_mode(self, total_pages=None, delay=5):
+        """自動截圖模式 - 智慧分頁版"""
         print("\n" + "="*60)
-        print("📸 自動截圖模式")
+        print("📸 自動截圖模式 (智慧分頁)")
         print("="*60)
-        print(f"📚 將截圖 {total_pages} 頁")
         print(f"⏱️ 每頁間隔 {delay} 秒")
         print("="*60)
         input("\n✅ 準備好後按 Enter 開始...")
@@ -574,45 +617,66 @@ class BooksCrawler:
             return
 
         # 互動式提示：在所有準備工作完成後，給予使用者手動開始的機會
-        # 這提供了一個檢查點，讓使用者可以在截圖前確認瀏覽器狀態是否正常
         user_input = input("✅ 已完成登入與教學引導，是否開始截圖？ (y/n): ").lower()
         if user_input != 'y':
             print("使用者取消操作，程式即將結束。")
             self.close()
             return
 
-        self.total_pages = total_pages
-        self.current_page = 1
+        page_num = 1
         successful_pages = 0
         failed_pages = []
 
-        while self.current_page <= self.total_pages:
-            print(f"\n進度: [{self.current_page}/{self.total_pages}]")
+        while True:
+            if total_pages is not None and page_num > total_pages:
+                break
+            print(f"\n進度: [第 {page_num} 頁]")
 
             # 截圖當前頁面
-            if self.capture_page_with_retry(self.current_page):
+            if self.capture_page_with_retry(page_num):
                 successful_pages += 1
             else:
-                failed_pages.append(self.current_page)
-                logger.error(f"❌ 第 {self.current_page} 頁截圖失敗")
+                failed_pages.append(page_num)
+                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
 
-            # 如果不是最後一頁，執行翻頁
-            if self.current_page < self.total_pages:
-                print(f"等待 {delay} 秒後翻頁...")
+            # 智慧分頁邏輯：嘗試尋找並點擊下一頁按鈕，如果找不到則結束
+            try:
+                logger.info("🔍 正在尋找下一頁按鈕...")
+                self.driver.switch_to.default_content()
+
+                next_buttons_xpaths = [
+                    "//button[contains(@class, 'next')]",
+                    "//button[contains(@class, 'right')]",
+                    "//div[contains(@class, 'viewer-right')]",
+                    "//a[contains(@class, 'next')]",
+                    "//*[@aria-label='Next page']",
+                    "//*[@id='next-page']"
+                ]
+                
+                next_button_found = False
+                for xpath in next_buttons_xpaths:
+                    try:
+                        # 使用較短的等待時間來避免在最後一頁等待太久
+                        next_btn = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.XPATH, xpath))
+                        )
+                        next_btn.click()
+                        logger.info(f"✅ 成功點擊翻頁按鈕 (策略: {xpath})")
+                        next_button_found = True
+                        break
+                    except Exception:
+                        continue
+                
+                if not next_button_found:
+                    logger.info("ℹ️ 找不到可點擊的下一頁按鈕，假設已到達最後一頁。")
+                    break
+
+                print(f"等待 {delay} 秒後截取下一頁...")
                 time.sleep(delay)
-
-                # 直接在 iframe 的 body 上發送向右鍵事件
-                try:
-                    body = self.driver.find_element(By.TAG_NAME, "body")
-                    ActionChains(self.driver).send_keys_to_element(body, Keys.ARROW_RIGHT).perform()
-                    logger.info("✅ 已發送翻頁指令 (ARROW_RIGHT)。")
-                    # 短暫等待頁面渲染
-                    time.sleep(1)
-                except Exception as e:
-                    logger.error(f"❌ 發送翻頁指令失敗: {e}")
-                    # 即使翻頁失敗，也繼續嘗試下一頁的截圖
-            
-            self.current_page += 1
+                page_num += 1
+            except Exception as e:
+                logger.info(f"ℹ️ 翻頁時發生未知錯誤，結束截圖。錯誤: {e}")
+                break
 
         # 顯示結果摘要
         print("\n" + "="*60)

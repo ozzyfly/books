@@ -3,6 +3,7 @@
 
 import os
 import time
+import threading
 import logging
 import platform
 from pathlib import Path
@@ -21,6 +22,7 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.firefox.service import Service as FirefoxService
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class BooksCrawler:
@@ -89,7 +91,7 @@ class BooksCrawler:
                 service = FirefoxService(log_output='geckodriver.log')
                 self.driver = webdriver.Firefox(service=service, options=options)
 
-            self.wait = WebDriverWait(self.driver, 10)
+            self.wait = WebDriverWait(self.driver, 5)
             self.driver.set_page_load_timeout(60)
 
             logger.info(f"✅ {browser.capitalize()} WebDriver 啟動成功")
@@ -122,7 +124,7 @@ class BooksCrawler:
                 ]
                 for by, value in close_selectors:
                     try:
-                        close_button = WebDriverWait(self.driver, 5).until(
+                        close_button = WebDriverWait(self.driver, 2).until(
                             EC.element_to_be_clickable((by, value))
                         )
                         close_button.click()
@@ -143,11 +145,8 @@ class BooksCrawler:
             login_link = None
             for by, value in login_selectors:
                 try:
-                    login_link = self.wait.until(
-                        EC.element_to_be_clickable((by, value))
-                    )
+                    login_link = self.driver.find_element(by, value)
                     login_link.click()
-                    logger.info(f"✅ 步驟 1/5：已點擊『會員登入』 ({by}, {value})。")
                     break
                 except Exception:
                     continue
@@ -166,17 +165,13 @@ class BooksCrawler:
             username_input = None
             for by, value in username_selectors:
                 try:
-                    username_input = self.wait.until(
-                        EC.element_to_be_clickable((by, value))
-                    )
+                    username_input = self.driver.find_element(by, value)
                     username_input.clear()
-                    # 使用 self.email 作為帳號
                     email_value = self.email or self.config.get("email")
                     if not email_value:
                         logger.error("❌ 未設定 email，請檢查 config.json。")
                         return False
                     username_input.send_keys(email_value)
-                    logger.info(f"✅ 步驟 2/5：帳號已填寫 ({by}, {value})。")
                     break
                 except Exception:
                     continue
@@ -195,12 +190,9 @@ class BooksCrawler:
             password_input = None
             for by, value in password_selectors:
                 try:
-                    password_input = self.wait.until(
-                        EC.element_to_be_clickable((by, value))
-                    )
+                    password_input = self.driver.find_element(by, value)
                     password_input.clear()
                     password_input.send_keys(self.config["password"])
-                    logger.info(f"✅ 步驟 3/5：密碼已填寫 ({by}, {value})。")
                     break
                 except Exception:
                     continue
@@ -220,11 +212,8 @@ class BooksCrawler:
             login_button = None
             for by, value in login_btn_selectors:
                 try:
-                    login_button = self.wait.until(
-                        EC.element_to_be_clickable((by, value))
-                    )
+                    login_button = self.driver.find_element(by, value)
                     login_button.click()
-                    logger.info(f"✅ 步驟 4/5：已點擊『登入』 ({by}, {value})，觸發 CAPTCHA。")
                     break
                 except Exception:
                     continue
@@ -288,22 +277,16 @@ class BooksCrawler:
         for by, value in selectors:
             try:
                 # 使用 WebDriverWait 等待按鈕可被點擊，取代固定等待
-                button = WebDriverWait(self.driver, 5).until(
+                button = WebDriverWait(self.driver, 2).until(
                     EC.element_to_be_clickable((by, value))
                 )
                 logger.info(f"🖱️ 找到教學按鈕 (策略: {by}='{value}')，正在點擊第 {step_count} 次...")
                 button.click()
                 
-                # 點擊後儲存截圖到正確的輸出目錄
-                if self.output_dir:
-                    screenshot_path = self.output_dir / f"tutorial_step_{step_count}.png"
-                    self.driver.save_screenshot(str(screenshot_path))
-                    logger.info(f"📸 已儲存教學步驟截圖: {screenshot_path.name}")
-                else:
-                    logger.warning("⚠️ output_dir 未設定，跳過教學步驟截圖。")
+                # 已移除教學引導截圖
 
                 # 短暫等待動畫效果
-                time.sleep(0.2)
+                time.sleep(0.1)
                 return True
             except Exception:
                 # 如果這個選擇器失敗，繼續嘗試下一個
@@ -354,7 +337,7 @@ class BooksCrawler:
                 if i < max_retries - 1:
                     logger.info("🔄 正在重新整理頁面並重試...")
                     self.driver.refresh()
-                    time.sleep(5)  # 等待頁面重新載入
+                    time.sleep(1)  # 等待頁面重新載入
                 else:
                     logger.error(f"❌ 在 {max_retries} 次嘗試後，處理教學引導失敗。")
                     # 使用一致的診斷快照功能
@@ -479,7 +462,7 @@ class BooksCrawler:
 
             except Exception as e:
                 logger.error(f"截圖失敗 (嘗試 {attempt + 1}): {e}", exc_info=True)
-                time.sleep(2)
+                time.sleep(0.5)
 
         logger.error(f"❌ 第 {page_num} 頁在 {max_retries} 次嘗試後仍截圖失敗。")
         return False
@@ -503,7 +486,7 @@ class BooksCrawler:
             while current_position < total_height:
                 # 滾動到當前位置
                 self.driver.execute_script(f"window.scrollTo(0, {current_position});")
-                time.sleep(0.2) # 等待滾動和渲染
+                time.sleep(0.1) # 等待滾動和渲染
 
                 # 截圖當前可視區域
                 temp_screenshot_path = self.output_dir / "temp_part.png"
@@ -631,8 +614,6 @@ class BooksCrawler:
             if total_pages is not None and page_num > total_pages:
                 break
             print(f"\n進度: [第 {page_num} 頁]")
-
-            # 截圖當前頁面
             if self.capture_page_with_retry(page_num):
                 successful_pages += 1
             else:
@@ -643,7 +624,6 @@ class BooksCrawler:
             try:
                 logger.info("🔍 正在尋找下一頁按鈕...")
                 self.driver.switch_to.default_content()
-
                 next_buttons_xpaths = [
                     "//button[contains(@class, 'next')]",
                     "//button[contains(@class, 'right')]",
@@ -652,25 +632,18 @@ class BooksCrawler:
                     "//*[@aria-label='Next page']",
                     "//*[@id='next-page']"
                 ]
-                
                 next_button_found = False
                 for xpath in next_buttons_xpaths:
                     try:
-                        # 使用較短的等待時間來避免在最後一頁等待太久
-                        next_btn = WebDriverWait(self.driver, 3).until(
-                            EC.element_to_be_clickable((By.XPATH, xpath))
-                        )
+                        next_btn = self.driver.find_element(By.XPATH, xpath)
                         next_btn.click()
-                        logger.info(f"✅ 成功點擊翻頁按鈕 (策略: {xpath})")
                         next_button_found = True
                         break
                     except Exception:
                         continue
-                
                 if not next_button_found:
                     logger.info("ℹ️ 找不到可點擊的下一頁按鈕，假設已到達最後一頁。")
                     break
-
                 print(f"等待 {delay} 秒後截取下一頁...")
                 time.sleep(delay)
                 page_num += 1
@@ -687,6 +660,7 @@ class BooksCrawler:
         if failed_pages:
             print(f"失敗頁面: {failed_pages}")
         print(f"📁 檔案位置: {self.output_dir}")
+
 
     def close(self):
         """關閉瀏覽器"""

@@ -14,8 +14,7 @@ from src.crawler import BooksCrawler
 
 def run_crawler(config, book_url, total_pages, delay):
     crawler = BooksCrawler(config)
-    # 子進程不做人工 CAPTCHA 驗證
-    crawler.login(auto_captcha=True)
+    # 子進程只導航，不做登入
     crawler.navigate_to_book(book_url)
     crawler.auto_capture_mode(total_pages, delay)
 
@@ -34,6 +33,7 @@ def main():
     print_banner()
     # 先登入
     crawler = BooksCrawler(config)
+    # 只在主進程登入一次
     crawler.login(auto_captcha=False)
 
     # 讓使用者輸入多本電子書網址
@@ -48,6 +48,7 @@ def main():
     # 主進程執行第一本書
     crawler.navigate_to_book(book_urls[0])
     crawler.auto_capture_mode(total_pages, delay)
+    # 不顯示截圖完成摘要
     # 其餘書籍平行處理
     for url in book_urls[1:]:
         p = Process(target=run_crawler, args=(config, url, total_pages, delay))

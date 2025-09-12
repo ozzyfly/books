@@ -500,33 +500,60 @@ class BooksCrawler:
             self.handle_tutorial()
             self.driver.switch_to.default_content()
 
-            # 2. 精準定位 iframe
-            logger.info("🔍 開始精準尋找電子書 iframe...")
-            iframe_selector = "iframe[id^='epubjs-view-']"
-            
+            # 2. 先列出所有 iframe 供診斷
+            all_iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            logger.info(f"頁面上找到 {len(all_iframes)} 個 iframe:")
+            for idx, iframe in enumerate(all_iframes):
+                logger.info(f"  [{idx+1}] id={iframe.get_attribute('id')}, class={iframe.get_attribute('class')}, name={iframe.get_attribute('name')}, src={iframe.get_attribute('src')}")
+
+            # 3. 嘗試多種選擇器，每個重試 10 秒（依據診斷結果優化）
+            iframe_selectors = [
+                "iframe[id^='epubjs-view-']",  # 最精準
+                "iframe[enable-annotation='true']",  # 屬性標記
+                "div.epub-container iframe",  # 父容器
+                "iframe[class*='epub']",  # epub 相關 class
+                "iframe[class*='book']",
+                "iframe[src*='book']",
+                "iframe[title*='book']",
+                "iframe[name*='book']",
+                "iframe[id*='page']",
+                "iframe[class*='page']",
+                "iframe[id*='spread']",
+                "iframe",  # 最後嘗試任何 iframe
+            ]
+            for selector in iframe_selectors:
+                try:
+                    logger.info(f"嘗試 iframe 選擇器: {selector}")
+                    found = False
+                    for _ in range(10):
+                        try:
+                            self.wait.until(EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, selector)))
+                            found = True
+                            break
+                        except Exception:
+                            time.sleep(1)
+                    if not found:
+                        raise Exception("iframe not found after retries")
+                    logger.info(f"✅ 已成功切換到電子書 iframe: {selector}")
+                    # 驗證 iframe 內容
+                    self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "body > div, body > *")))
+                    logger.info("✅ iframe 內部內容驗證成功。")
+                    return True
+                except Exception as e:
+                    logger.warning(f"❌ 切換失敗: {selector} ({e})")
+                    self.driver.switch_to.default_content()
+            logger.error("❌ 所有 iframe 選擇器都失敗了，已儲存診斷快照與原始碼。請檢查 output/diagnostics 目錄。")
+            self.diagnose_page_structure()
+            # 額外儲存截圖
             try:
-                # 等待 iframe 出現
-                # 策略更新：使用 'frame_to_be_available_and_switch_to_it'
-                # 這個條件會等待 iframe 存在並且可以被成功切換，一步到位解決時序問題。
-                self.wait.until(
-                    EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, iframe_selector))
-                )
-                logger.info("✅ 已成功切換到電子書 iframe，正在驗證內部內容...")
-
-                # 3. 驗證 iframe 內部內容
-                #    此驗證邏輯現在是正確的，因為我們已經在 iframe 內部。
-                #    等待 body > div 的出現，確保 epub.js 已渲染內容。
-                self.wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "body > div"))
-                )
-                logger.info("✅ iframe 內部內容驗證成功。")
-                return True
-                
+                diag_dir = self.output_dir or Path("output/diagnostics")
+                diag_dir.mkdir(parents=True, exist_ok=True)
+                screenshot_path = diag_dir / "iframe_detection_failed.png"
+                self.driver.save_screenshot(str(screenshot_path))
+                logger.info(f"📸 已儲存 iframe 偵測失敗截圖: {screenshot_path}")
             except Exception as e:
-                logger.error(f"❌ 未找到、無法切換或驗證電子書 iframe: {e}")
-                self.diagnose_page_structure() # 失敗時執行診斷
-                return False
-
+                logger.warning(f"❌ 儲存診斷截圖失敗: {e}")
+            return False
         except Exception as e:
             logger.error(f"iframe 處理過程中發生嚴重錯誤: {e}", exc_info=True)
             return False

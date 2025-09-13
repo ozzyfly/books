@@ -918,11 +918,11 @@ class BooksCrawler:
                 current_direction = 'left'
                 print("✅ 偵測到正確方向：左翻 (left)")
             else:
-                print("⚠️ 無法自動判斷方向，預設為右翻 (right)")
-                current_direction = 'right'
+                print("⚠️ 無法自動判斷方向，預設為左翻 (left)")
+                current_direction = 'left'
 
         # 狀態變數 (閉包內透過 nonlocal 修改)
-        current_direction = 'right'  # 可能值: 'right' / 'left'
+    current_direction = 'left'  # 可能值: 'right' / 'left'
         last_page_index = None       # 解析出的頁碼 (數字)
         last_total_pages = None      # 解析出的總頁數
         signature_history = []       # 用於偵測循環 (A,B,A) 模式
@@ -933,7 +933,7 @@ class BooksCrawler:
         successful_pages = 0
         failed_pages = []
 
-        MAX_PAGE_NUM = 7  # 本書只需截 7 頁
+    # 移除 MAX_PAGE_NUM，改用 signature 重複或無法翻頁判斷結束
 
         def is_popup_present():
             # 檢查是否有 popup/panel 遮擋
@@ -968,10 +968,26 @@ class BooksCrawler:
         while True:
             if total_pages is not None and page_num > total_pages:
                 break
-            if page_num > MAX_PAGE_NUM:
-                print(f"已達最大截圖頁數 {MAX_PAGE_NUM}，自動停止。")
-                break
             print(f"\n進度: [第 {page_num} 頁]")
+
+            # 翻頁後切到主iframe再截圖
+            switched = switch_to_main_iframe()
+            if not switched:
+                logger.warning("❌ 無法切換到主電子書 iframe，截圖失敗。")
+            # 截圖
+            sig = page_signature()
+            if self.capture_page_with_retry(page_num):
+                successful_pages += 1
+            else:
+                failed_pages.append(page_num)
+                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
+
+            # 判斷 signature 是否重複（連續2次相同則停止）
+            if len(signature_history) > 0 and sig == signature_history[-1]:
+                print("偵測到頁面內容重複，已到結尾，停止截圖。")
+                logger.info("偵測到頁面內容重複，已到結尾，停止截圖。")
+                break
+            signature_history.append(sig)
 
             # 翻頁前，先切回 default_content 點擊 next-page 按鈕
             next_button_found = False
@@ -1025,16 +1041,6 @@ class BooksCrawler:
                 logger.error(f"❌ 翻頁過程發生例外: {e}")
                 break
 
-            # 翻頁後切到主iframe再截圖
-            switched = switch_to_main_iframe()
-            if not switched:
-                logger.warning("❌ 無法切換到主電子書 iframe，截圖失敗。")
-            # 截圖
-            if self.capture_page_with_retry(page_num):
-                successful_pages += 1
-            else:
-                failed_pages.append(page_num)
-                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
             page_num += 1
 
         # 顯示結果摘要

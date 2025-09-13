@@ -395,15 +395,36 @@ class BooksCrawler:
         logger.info(f"前往: {book_url}")
         self.driver.get(book_url)
 
-        # 等待頁面完全載入 (等待 iframe 出現)
+        # 等待頁面完全載入 (多種 iframe/主內容容器)
         logger.info("等待頁面載入...")
-        try:
-            self.wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "iframe[id^='epubjs-view-']"))
-            )
-            logger.info("✅ 電子書 iframe 已載入。")
-        except Exception:
-            logger.warning("⚠️ 等待電子書 iframe 超時，繼續執行...")
+        iframe_selectors = [
+            "iframe[id^='epubjs-view-']", "iframe[class*='epub']", "iframe[class*='book']",
+            "iframe[src*='book']", "iframe[title*='book']", "iframe[name*='book']",
+            "iframe[id*='page']", "iframe[class*='page']", "iframe[id*='spread']"
+        ]
+        found_iframe = False
+        for selector in iframe_selectors:
+            try:
+                self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                logger.info(f"✅ 電子書 iframe 已載入: {selector}")
+                found_iframe = True
+                break
+            except Exception:
+                continue
+        if not found_iframe:
+            # 嘗試等待主內容容器
+            main_selectors = ["#UiObj-book-container", "div.epub-container", "div.reader-container", "body", "main", "#content"]
+            found_main = False
+            for sel in main_selectors:
+                try:
+                    self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
+                    logger.info(f"✅ 主內容容器已載入: {sel}")
+                    found_main = True
+                    break
+                except Exception:
+                    continue
+            if not found_main:
+                logger.warning("⚠️ 等待電子書 iframe/主內容容器超時，繼續執行...")
 
         # 建立輸出目錄
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -639,8 +660,6 @@ class BooksCrawler:
                 logger.error(f"截圖失敗 (嘗試 {attempt + 1}): {e}", exc_info=True)
                 time.sleep(0.5)
 
-        logger.error(f"❌ 第 {page_num} 頁在 {max_retries} 次嘗試後仍截圖失敗。")
-        return False
 
     def capture_full_page_screenshot(self, filename):
         """
@@ -773,47 +792,250 @@ class BooksCrawler:
             logger.error("❌ 無法開始截圖，因為找不到電子書 iframe。")
             return
 
+        # 自動偵測翻頁方向
+        def js_click_right():
+            try:
+                self.driver.switch_to.default_content()
+                self.driver.execute_script("var b=document.getElementById('UiObj-book-right-btn'); if(b){b.click(); return true;} return false;")
+                return True
+            except Exception:
+                return False
+
+        def js_click_left():
+            try:
+                self.driver.switch_to.default_content()
+                self.driver.execute_script("var b=document.getElementById('UiObj-book-left-btn'); if(b){b.click(); return true;} return false;")
+                return True
+            except Exception:
+                return False
+
+        def page_signature():
+            # 使用現有 signature 邏輯
+            try:
+                self.driver.switch_to.default_content()
+                html_length = 0
+                text_hash = 0
+                img_hash = 0
+                img_srcs = []
+                selectors_to_try = [
+                    "iframe[id^='epubjs-view-']", "iframe[class*='epub']", "iframe[class*='book']",
+                    "#UiObj-book-container", "div.epub-container", "div.reader-container", "body", "main", "#content",
+                    "canvas", "object", "embed", "div[id*='book']", "div[class*='reader']",
+                    "div.page", "div[id^='page']", "div[class^='page']", "svg"
+                ]
+                user_selector = self.config.get('main_content_selector', '').strip()
+                if user_selector:
+                    selectors_to_try = [user_selector] + selectors_to_try
+                candidate_info = {}
+                body_html = None
+                body_text = ''
+                img_srcs = []
+                for sel in selectors_to_try:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in elements:
+                            html_candidate = el.get_attribute('innerHTML') or ''
+                            text_candidate = (el.text or '')[:8000]
+                            imgs = el.find_elements(By.TAG_NAME, 'img')
+                            srcs = []
+                            for im in imgs[:50]:
+                                try:
+                                    src = im.get_attribute('src') or ''
+                                    if src:
+                                        short_src = src.split('?')[0][-120:]
+                                        srcs.append(short_src)
+                                except Exception:
+                                    continue
+                            candidate_info[sel] = {
+                                'len': len(html_candidate),
+                                'text': text_candidate[:120],
+                                'srcs': srcs
+                            }
+                            if len(html_candidate) > 500 and srcs:
+                                body_html = html_candidate
+                                body_text = text_candidate
+                                img_srcs = srcs
+                                break
+                        if body_html:
+                            break
+                    except Exception:
+                        continue
+                if body_html is None:
+                    try:
+                        canvas_elements = self.driver.find_elements(By.TAG_NAME, 'canvas')
+                        svg_elements = self.driver.find_elements(By.TAG_NAME, 'svg')
+                        canvas_svg_hash = 0
+                        if canvas_elements or svg_elements:
+                            canvas_htmls = [el.get_attribute('outerHTML') or '' for el in canvas_elements]
+                            svg_htmls = [el.get_attribute('outerHTML') or '' for el in svg_elements]
+                            combined = ''.join(canvas_htmls + svg_htmls)
+                            if combined:
+                                canvas_svg_hash = hash(combined)
+                        screenshot_hash = 0
+                        try:
+                            png = self.driver.get_screenshot_as_png()
+                            import hashlib
+                            screenshot_hash = int(hashlib.sha256(png).hexdigest(), 16) % (10 ** 12)
+                        except Exception:
+                            screenshot_hash = 0
+                        return f"fallback|canvas_svg_hash={canvas_svg_hash}|screenshot_hash={screenshot_hash}"
+                    except Exception as e:
+                        return 'no-content'
+                html_length = len(body_html)
+                if body_text:
+                    try:
+                        text_hash = hash(body_text)
+                    except Exception:
+                        text_hash = 0
+                if img_srcs:
+                    try:
+                        img_hash = hash('|'.join(sorted(img_srcs))[:4000])
+                    except Exception:
+                        img_hash = 0
+                return f"len={html_length}|th={text_hash}|ih={img_hash}|imgs={len(img_srcs)}|srcs={'|'.join(img_srcs)}"
+            except Exception as e:
+                return 'sig-error'
+
+        def direction_trial():
+            nonlocal current_direction
+            print("🔍 正在自動偵測翻頁方向...")
+            self.driver.switch_to.default_content()
+            base_sig = page_signature()
+            js_click_right()
+            time.sleep(0.5)
+            right_sig = page_signature()
+            js_click_left()
+            time.sleep(0.5)
+            js_click_left()
+            time.sleep(0.5)
+            left_sig = page_signature()
+            js_click_right()
+            time.sleep(0.5)
+            if right_sig != base_sig and left_sig == base_sig:
+                current_direction = 'right'
+                print("✅ 偵測到正確方向：右翻 (right)")
+            elif left_sig != base_sig and right_sig == base_sig:
+                current_direction = 'left'
+                print("✅ 偵測到正確方向：左翻 (left)")
+            else:
+                print("⚠️ 無法自動判斷方向，預設為右翻 (right)")
+                current_direction = 'right'
+
+        # 狀態變數 (閉包內透過 nonlocal 修改)
+        current_direction = 'right'  # 可能值: 'right' / 'left'
+        last_page_index = None       # 解析出的頁碼 (數字)
+        last_total_pages = None      # 解析出的總頁數
+        signature_history = []       # 用於偵測循環 (A,B,A) 模式
+
+        direction_trial()
+
         page_num = 1
         successful_pages = 0
         failed_pages = []
 
+        MAX_PAGE_NUM = 7  # 本書只需截 7 頁
+
+        def is_popup_present():
+            # 檢查是否有 popup/panel 遮擋
+            try:
+                overlays = self.driver.find_elements(By.XPATH, "//*[contains(@class, 'UiObj-model') or contains(@id, 'UiObj-model')]")
+                for el in overlays:
+                    if el.is_displayed():
+                        return True
+                return False
+            except Exception:
+                return False
+
+        def switch_to_main_iframe():
+            # 自動切換到主電子書 iframe
+            try:
+                # 先回到 default_content
+                self.driver.switch_to.default_content()
+                # 嘗試自動偵測主 iframe
+                selectors = [
+                    "iframe[id^='epubjs-view-']", "iframe[class*='epub']", "iframe[class*='book']"
+                ]
+                for sel in selectors:
+                    iframes = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    for iframe in iframes:
+                        if iframe.is_displayed():
+                            self.driver.switch_to.frame(iframe)
+                            return True
+                return False
+            except Exception:
+                return False
+
         while True:
             if total_pages is not None and page_num > total_pages:
                 break
+            if page_num > MAX_PAGE_NUM:
+                print(f"已達最大截圖頁數 {MAX_PAGE_NUM}，自動停止。")
+                break
             print(f"\n進度: [第 {page_num} 頁]")
+
+            # 翻頁前，先切回 default_content 點擊 next-page 按鈕
+            next_button_found = False
+            diagnostics_candidates = []
+            try:
+                self.driver.switch_to.default_content()
+                # 檢查 popup/panel 遮擋
+                if is_popup_present():
+                    print("偵測到 popup/panel 遮擋，停止翻頁。")
+                    logger.info("偵測到 popup/panel 遮擋，停止翻頁。")
+                    break
+                # 嚴格模式：只用 JS 觸發 click
+                try:
+                    self.driver.execute_script("document.querySelector('button#UiObj-book-right-btn.viewer__body__pagination.right')?.click();")
+                    next_button_found = True
+                    diagnostics_candidates.append({
+                        'selector': "button#UiObj-book-right-btn.viewer__body__pagination.right",
+                        'type': 'strict',
+                        'text': '',
+                        'clicked': True,
+                        'method': 'js'
+                    })
+                    logger.info(f"✅ 嚴格模式點擊翻頁按鈕: button#UiObj-book-right-btn.viewer__body__pagination.right (JS)")
+                except Exception as e:
+                    diagnostics_candidates.append({
+                        'selector': "button#UiObj-book-right-btn.viewer__body__pagination.right",
+                        'type': 'strict',
+                        'text': '',
+                        'clicked': False,
+                        'error': str(e),
+                        'method': 'js'
+                    })
+                    logger.warning(f"❌ 嚴格模式翻頁失敗 (JS): {e}")
+                # 輸出 diagnostics log
+                try:
+                    diag_dir = self.output_dir or Path("output/diagnostics")
+                    diag_dir.mkdir(parents=True, exist_ok=True)
+                    diag_path = diag_dir / f"next_page_candidates_{page_num:04d}.log"
+                    with open(diag_path, "w", encoding="utf-8") as f:
+                        for cand in diagnostics_candidates:
+                            f.write(str(cand) + "\n")
+                    logger.info(f"📄 已輸出 next-page candidates 診斷: {diag_path}")
+                except Exception as e:
+                    logger.warning(f"❌ 診斷 log 輸出失敗: {e}")
+                if not next_button_found:
+                    logger.error("❌ 找不到正確翻頁按鈕，已停止。")
+                    break
+                # 翻頁後等待頁面載入
+                time.sleep(delay)
+            except Exception as e:
+                logger.error(f"❌ 翻頁過程發生例外: {e}")
+                break
+
+            # 翻頁後切到主iframe再截圖
+            switched = switch_to_main_iframe()
+            if not switched:
+                logger.warning("❌ 無法切換到主電子書 iframe，截圖失敗。")
+            # 截圖
             if self.capture_page_with_retry(page_num):
                 successful_pages += 1
             else:
                 failed_pages.append(page_num)
                 logger.error(f"❌ 第 {page_num} 頁截圖失敗")
-
-            # 智慧分頁邏輯：嘗試尋找並點擊下一頁按鈕，如果找不到則結束
-            try:
-                self.driver.switch_to.default_content()
-                next_buttons_xpaths = [
-                    "//button[contains(@class, 'next')]",
-                    "//button[contains(@class, 'right')]",
-                    "//div[contains(@class, 'viewer-right')]",
-                    "//a[contains(@class, 'next')]",
-                    "//*[@aria-label='Next page']",
-                    "//*[@id='next-page']"
-                ]
-                next_button_found = False
-                for xpath in next_buttons_xpaths:
-                    try:
-                        next_btn = self.driver.find_element(By.XPATH, xpath)
-                        next_btn.click()
-                        next_button_found = True
-                        break
-                    except Exception:
-                        continue
-                if not next_button_found:
-                    break
-                print(f"等待 {delay} 秒後截取下一頁...")
-                time.sleep(delay)
-                page_num += 1
-            except Exception as e:
-                break
+            page_num += 1
 
         # 顯示結果摘要
         print("\n" + "="*60)

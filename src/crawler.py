@@ -34,6 +34,12 @@ class BooksCrawler:
         self.output_dir = None
         self.main_iframe = None
         self.full_page_screenshot = self.config.get('full_page_screenshot', False)
+        self.iframe_switched = False  # 追蹤是否已切換到 iframe
+        self.tutorial_handled = False  # 追蹤是否已處理教學引導
+        self.popup_closed_count = 0  # 追蹤關閉的彈出視窗數量
+        self.last_page_content = None  # 儲存上一頁的內容用於比較
+        self.same_page_count = 0  # 追蹤相同頁面的次數
+        self.current_page_number = None  # 追蹤當前頁碼
         self.setup_driver()
 
     def setup_driver(self):
@@ -335,6 +341,11 @@ class BooksCrawler:
         """
         自動化處理電子書閱讀器初始可能出現的教學引導畫面。
         """
+        # 如果已經處理過教學引導，直接返回
+        if self.tutorial_handled:
+            logger.info("ℹ️ 教學引導已處理過，跳過此步驟")
+            return
+        
         max_retries = 3
         for i in range(max_retries):
             try:
@@ -361,6 +372,7 @@ class BooksCrawler:
                             logger.info("ℹ️ 未找到任何教學引導按鈕，繼續執行。")
                         break
                 
+                self.tutorial_handled = True  # 標記為已處理
                 logger.info(f"✅ 第 {i + 1} 次嘗試成功，結束教學引導處理。")
                 return
 
@@ -373,6 +385,7 @@ class BooksCrawler:
                 else:
                     logger.error(f"❌ 在 {max_retries} 次嘗試後，處理教學引導失敗。")
                     self._save_diagnostic_snapshot("tutorial_handling_failed")
+                    self.tutorial_handled = True  # 避免重複嘗試
                     logger.info("ℹ️ 將繼續執行後續步驟...")
 
     def _click_tutorial_next_button(self, selectors, step_count):
@@ -394,20 +407,28 @@ class BooksCrawler:
 
     def find_and_switch_to_ebook_iframe(self):
         """精準定位並切換到電子書 iframe，並驗證內部內容"""
+        # 如果已經在 iframe 中，直接返回
+        if self.iframe_switched:
+            try:
+                # 驗證是否仍在正確的 iframe 中
+                self.driver.find_element(By.CSS_SELECTOR, "body > div, body > *")
+                return True
+            except:
+                # 如果驗證失敗，重置狀態並重新切換
+                self.iframe_switched = False
+                logger.info("⚠️ iframe 狀態已失效，重新切換...")
+        
         self.driver.switch_to.default_content()
         try:
-            # 1. 處理教學引導
-            self.handle_tutorial()
-            self.driver.switch_to.default_content()
+            # 1. 處理教學引導（只在第一次時處理）
+            if not self.tutorial_handled:
+                self.handle_tutorial()
+                self.driver.switch_to.default_content()
 
-            # 2. 先列出所有 iframe 供診斷
-            all_iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-            logger.info(f"頁面上找到 {len(all_iframes)} 個 iframe:")
-            for idx, iframe in enumerate(all_iframes):
-                logger.info(f"  [{idx+1}] id={iframe.get_attribute('id')}, "
-                          f"class={iframe.get_attribute('class')}, "
-                          f"name={iframe.get_attribute('name')}, "
-                          f"src={iframe.get_attribute('src')}")
+            # 2. 先列出所有 iframe 供診斷（只在調試模式下執行）
+            if logger.level <= logging.DEBUG:
+                all_iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                logger.debug(f"頁面上找到 {len(all_iframes)} 個 iframe")
 
             # 3. 嘗試多種選擇器
             iframe_selectors = [
@@ -416,43 +437,28 @@ class BooksCrawler:
                 "div.epub-container iframe",
                 "iframe[class*='epub']",
                 "iframe[class*='book']",
-                "iframe[src*='book']",
-                "iframe[title*='book']",
-                "iframe[name*='book']",
-                "iframe[id*='page']",
-                "iframe[class*='page']",
-                "iframe[id*='spread']",
                 "iframe",
             ]
             
             for selector in iframe_selectors:
                 try:
-                    logger.info(f"嘗試 iframe 選擇器: {selector}")
-                    found = False
-                    for _ in range(10):
-                        try:
-                            self.wait.until(EC.frame_to_be_available_and_switch_to_it(
-                                (By.CSS_SELECTOR, selector)))
-                            found = True
-                            break
-                        except Exception:
-                            time.sleep(1)
+                    logger.debug(f"嘗試 iframe 選擇器: {selector}")
+                    self.wait.until(EC.frame_to_be_available_and_switch_to_it(
+                        (By.CSS_SELECTOR, selector)))
                     
-                    if not found:
-                        raise Exception("iframe not found after retries")
-                    
-                    logger.info(f"✅ 已成功切換到電子書 iframe: {selector}")
                     # 驗證 iframe 內容
                     self.wait.until(EC.presence_of_element_located(
                         (By.CSS_SELECTOR, "body > div, body > *")))
-                    logger.info("✅ iframe 內部內容驗證成功。")
+                    
+                    self.iframe_switched = True  # 標記為已切換
+                    logger.info(f"✅ 已成功切換到電子書 iframe")
                     return True
                     
-                except Exception as e:
-                    logger.warning(f"❌ 切換失敗: {selector} ({e})")
+                except Exception:
                     self.driver.switch_to.default_content()
+                    continue
             
-            logger.error("❌ 所有 iframe 選擇器都失敗了，已儲存診斷快照與原始碼。")
+            logger.error("❌ 所有 iframe 選擇器都失敗了")
             self.diagnose_page_structure()
             return False
             
@@ -503,17 +509,18 @@ class BooksCrawler:
             logger.warning("⚠️ 在頁面上未找到任何 <iframe> 或 <frame> 元素。")
 
     def capture_page_with_retry(self, page_num, max_retries=3, full_page=False):
-        """改進的截圖方法，包含重試機制，可選擇全頁截圖"""
+        """改進的截圖方法，包含重試機制和重複內容檢測"""
         for attempt in range(max_retries):
             try:
                 logger.info(
                     f"📸 截圖第 {page_num} 頁 (嘗試 {attempt + 1}/{max_retries}) "
                     f"{'(全頁)' if full_page else ''}")
 
-                # 確保在正確的 frame 中
-                if not self.find_and_switch_to_ebook_iframe():
-                    self.driver.switch_to.default_content()
-                    logger.warning("⚠️ 未能切換到電子書 iframe，將嘗試截取整個頁面。")
+                # 只在需要時切換到 iframe
+                if not self.iframe_switched:
+                    if not self.find_and_switch_to_ebook_iframe():
+                        self.driver.switch_to.default_content()
+                        logger.warning("⚠️ 未能切換到電子書 iframe，將嘗試截取整個頁面。")
                 
                 # 截圖路徑
                 screenshot_path = self.output_dir / f"page_{page_num:04d}.png"
@@ -527,17 +534,85 @@ class BooksCrawler:
 
                 # 驗證截圖檔案
                 if success:
+                    # 檢查是否與前一張截圖相同
+                    if page_num > 1:
+                        prev_screenshot_path = self.output_dir / f"page_{page_num-1:04d}.png"
+                        if prev_screenshot_path.exists() and self._compare_screenshots(
+                            str(prev_screenshot_path), str(screenshot_path)):
+                            logger.warning(f"⚠️ 第 {page_num} 頁截圖與前一頁相同")
+                            self.same_page_count += 1
+                            # 如果確實相同，刪除重複的截圖
+                            if self.same_page_count >= 2:
+                                screenshot_path.unlink()  # 刪除重複的檔案
+                                logger.info(f"🗑️ 已刪除重複的截圖檔案")
+                                return False
+                        else:
+                            self.same_page_count = 0
+                    
                     logger.info(f"✅ 截圖成功: {screenshot_path.name}")
                     return True
                 else:
                     logger.warning(f"截圖檔案 {screenshot_path.name} 為空或不存在。")
+                    # 重置 iframe 狀態，下次重新切換
+                    self.iframe_switched = False
 
             except Exception as e:
                 logger.error(f"截圖失敗 (嘗試 {attempt + 1}): {e}", exc_info=True)
+                self.iframe_switched = False  # 重置狀態
                 time.sleep(0.5)
 
         logger.error(f"❌ 第 {page_num} 頁在 {max_retries} 次嘗試後仍截圖失敗。")
         return False
+    
+    def _compare_screenshots(self, path1, path2):
+        """比較兩張截圖是否相同"""
+        try:
+            img1 = Image.open(path1)
+            img2 = Image.open(path2)
+            
+            # 如果尺寸不同，直接返回 False
+            if img1.size != img2.size:
+                return False
+            
+            # 將圖片轉換為相同模式進行比較
+            img1 = img1.convert('RGB')
+            img2 = img2.convert('RGB')
+            
+            # 快速比較：取樣比較
+            # 只比較部分像素以提高效能
+            width, height = img1.size
+            sample_points = min(1000, width * height // 100)  # 取樣點數
+            
+            import random
+            random.seed(42)  # 固定隨機種子以確保一致性
+            
+            differences = 0
+            for _ in range(sample_points):
+                x = random.randint(0, width - 1)
+                y = random.randint(0, height - 1)
+                
+                pixel1 = img1.getpixel((x, y))
+                pixel2 = img2.getpixel((x, y))
+                
+                # 允許些微差異（壓縮造成的）
+                if any(abs(p1 - p2) > 5 for p1, p2 in zip(pixel1, pixel2)):
+                    differences += 1
+            
+            # 如果差異小於 1%，認為圖片相同
+            similarity = 1 - (differences / sample_points)
+            is_same = similarity > 0.99
+            
+            if is_same:
+                logger.debug(f"截圖相似度: {similarity:.2%}")
+            
+            img1.close()
+            img2.close()
+            
+            return is_same
+            
+        except Exception as e:
+            logger.debug(f"比較截圖時發生錯誤: {e}")
+            return False
 
     def capture_full_page_screenshot(self, filename):
         """
@@ -631,11 +706,12 @@ class BooksCrawler:
             return False
 
     def auto_capture_mode(self, total_pages=None, delay=5):
-        """自動截圖模式 - 智慧分頁版"""
+        """自動截圖模式 - 智慧分頁版（改進版）"""
         print("\n" + "="*60)
         print("📸 自動截圖模式 (智慧分頁)")
         print("="*60)
         print(f"⏱️ 每頁間隔 {delay} 秒")
+        print("📚 將自動偵測最後一頁並停止")
         print("="*60)
         print("\n✅ 已自動開始截圖流程...")
         
@@ -649,10 +725,14 @@ class BooksCrawler:
         failed_pages = []
         consecutive_failures = 0
         max_consecutive_failures = 3
+        
+        # 重置相同頁面計數器
+        self.same_page_count = 0
+        self.last_page_content = None
 
         while True:
-            # 若有 total_pages 設定則跳出
             if total_pages is not None and page_num > total_pages:
+                logger.info(f"📊 已達到指定的頁數限制 ({total_pages} 頁)")
                 break
             
             print(f"\n進度: [第 {page_num} 頁]")
@@ -665,25 +745,29 @@ class BooksCrawler:
                 failed_pages.append(page_num)
                 consecutive_failures += 1
                 logger.error(f"❌ 第 {page_num} 頁截圖失敗")
+                
                 # 如果連續失敗太多次，停止執行
                 if consecutive_failures >= max_consecutive_failures:
                     logger.error(f"❌ 連續 {max_consecutive_failures} 頁截圖失敗，停止執行。")
                     break
 
-            # 檢查是否有遮擋元素，若有則直接停止本書
-            try:
-                block_elements = self.driver.find_elements(By.XPATH, "//*[contains(@id, 'UiObj-model')]")
-                if any(e.is_displayed() for e in block_elements):
-                    logger.warning("⚠️ 偵測到遮擋元素: //*[contains(@id, 'UiObj-model')]，自動結束本書截圖流程。")
-                    break
-            except Exception:
-                pass
-
-            # 嘗試翻頁
+            # 嘗試翻頁，如果失敗則結束
             if not self._try_next_page():
-                logger.info(f"📊 已到達最後一頁或無法繼續翻頁")
+                # 再次確認是否真的無法翻頁
+                if self.same_page_count >= 2:
+                    logger.info(f"📚 確認已到達最後一頁（第 {page_num} 頁）")
+                    print(f"\n📚 已到達電子書最後一頁（第 {page_num} 頁）")
+                    break
+                else:
+                    logger.info(f"📊 無法繼續翻頁，可能已到達最後一頁")
+                    break
+            
+            # 檢查是否內容重複（額外保護）
+            if self.same_page_count >= 2:
+                logger.warning(f"⚠️ 偵測到連續 {self.same_page_count} 次相同內容，停止截圖")
+                print(f"\n⚠️ 偵測到重複內容，可能已到達最後一頁（第 {page_num} 頁）")
                 break
-
+            
             print(f"等待 {delay} 秒後截取下一頁...")
             time.sleep(delay)
             page_num += 1
@@ -692,12 +776,18 @@ class BooksCrawler:
         self._show_summary(successful_pages, failed_pages)
 
     def _try_next_page(self):
-        """嘗試翻到下一頁"""
+        """嘗試翻到下一頁 - 改進版，包含重複頁面檢測"""
         try:
             self.driver.switch_to.default_content()
             
+            # 取得翻頁前的頁面內容（用於比較）
+            before_content = self._get_page_content_hash()
+            
             # 檢查並關閉彈出視窗
             self._close_popups()
+            
+            # 檢查頁碼顯示（如果有的話）
+            current_page_text = self._get_current_page_number()
             
             # 博客來電子書專用翻頁按鈕選擇器
             next_buttons_xpaths = [
@@ -711,61 +801,211 @@ class BooksCrawler:
                 "//*[@id='next-page']"
             ]
             
+            next_button_clicked = False
+            
             for xpath in next_buttons_xpaths:
                 try:
                     next_btn = self.driver.find_element(By.XPATH, xpath)
                     if next_btn.is_displayed() and next_btn.is_enabled():
+                        # 檢查按鈕是否被禁用（可能有 disabled 屬性或特定 class）
+                        btn_classes = next_btn.get_attribute('class') or ''
+                        if 'disabled' in btn_classes.lower() or 'inactive' in btn_classes.lower():
+                            logger.info(f"⚠️ 翻頁按鈕已禁用，可能已到達最後一頁")
+                            return False
+                        
                         next_btn.click()
+                        next_button_clicked = True
                         logger.info(f"✅ 成功點擊翻頁按鈕: {xpath}")
-                        return True
+                        break
                 except Exception:
                     continue
             
-            # 如果都失敗，嘗試使用鍵盤
-            try:
-                ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
-                logger.info("✅ 使用鍵盤右鍵翻頁")
-                return True
-            except Exception:
-                pass
+            if not next_button_clicked:
+                # 如果都失敗，嘗試使用鍵盤
+                try:
+                    ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
+                    logger.info("✅ 使用鍵盤右鍵翻頁")
+                    next_button_clicked = True
+                except Exception:
+                    pass
             
-            logger.warning("❌ 無法找到有效的翻頁按鈕")
-            return False
+            if not next_button_clicked:
+                logger.warning("❌ 無法找到有效的翻頁按鈕")
+                return False
+            
+            # 等待頁面載入
+            time.sleep(1.5)
+            
+            # 取得翻頁後的頁面內容
+            after_content = self._get_page_content_hash()
+            
+            # 檢查頁碼是否改變
+            new_page_text = self._get_current_page_number()
+            if current_page_text and new_page_text and current_page_text == new_page_text:
+                logger.info(f"⚠️ 頁碼未改變 ({current_page_text})，可能已到達最後一頁")
+                self.same_page_count += 1
+                if self.same_page_count >= 2:
+                    return False
+            
+            # 比較內容是否改變
+            if before_content and after_content and before_content == after_content:
+                self.same_page_count += 1
+                logger.warning(f"⚠️ 頁面內容未改變 (連續 {self.same_page_count} 次)")
+                
+                # 如果連續2次內容相同，判定為已到達最後一頁
+                if self.same_page_count >= 2:
+                    logger.info("📚 偵測到已到達最後一頁（內容未改變）")
+                    return False
+            else:
+                self.same_page_count = 0  # 重置計數器
+                logger.info("✅ 頁面內容已更新")
+            
+            return True
             
         except Exception as e:
             logger.error(f"翻頁過程發生錯誤: {e}")
             return False
+    
+    def _get_page_content_hash(self):
+        """取得當前頁面內容的雜湊值，用於比較頁面是否改變"""
+        try:
+            # 嘗試切換到 iframe
+            if self.iframe_switched:
+                # 取得 iframe 內的文字內容
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+            else:
+                # 如果不在 iframe 中，取得主頁面的內容
+                self.driver.switch_to.default_content()
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+            
+            # 如果頁面文字太短，可能是空頁面
+            if len(page_text) < 10:
+                # 嘗試取得頁面的 HTML 結構
+                page_html = self.driver.page_source
+                return hash(page_html)
+            
+            # 返回文字內容的雜湊值
+            return hash(page_text)
+            
+        except Exception as e:
+            logger.debug(f"無法取得頁面內容雜湊: {e}")
+            return None
+    
+    def _get_current_page_number(self):
+        """嘗試取得當前頁碼顯示"""
+        try:
+            # 常見的頁碼顯示選擇器
+            page_selectors = [
+                "//div[contains(@class, 'page-number')]",
+                "//span[contains(@class, 'page')]",
+                "//div[contains(@class, 'pagination')]//span[@class='current']",
+                "//*[contains(text(), '頁') and contains(text(), '/')]",
+                "//input[@type='number' and contains(@class, 'page')]",
+            ]
+            
+            for selector in page_selectors:
+                try:
+                    element = self.driver.find_element(By.XPATH, selector)
+                    if element.is_displayed():
+                        text = element.text or element.get_attribute('value')
+                        if text:
+                            logger.debug(f"找到頁碼顯示: {text}")
+                            return text
+                except:
+                    continue
+                    
+        except Exception:
+            pass
+        
+        return None
 
     def _close_popups(self):
-        """關閉可能的彈出視窗"""
+        """關閉可能的彈出視窗 - 改進版"""
+        popup_closed = False
+        
+        # 定義更精確的彈出視窗選擇器
         popup_selectors = [
-            "//*[contains(@class, 'UiObj-model')]",
-            "//*[contains(@id, 'UiObj-model')]",
-            "//div[contains(@class, 'popup')]",
-            "//div[contains(@class, 'modal')]",
-            "//div[contains(@class, 'overlay')]"
+            # 博客來特定的彈出視窗
+            ("//div[@id='UiObj-model' and contains(@style, 'display: block')]", "UiObj-model (visible)"),
+            ("//div[contains(@class, 'popup') and contains(@style, 'display: block')]", "popup (visible)"),
+            ("//div[contains(@class, 'modal') and contains(@style, 'display: block')]", "modal (visible)"),
+            ("//div[contains(@class, 'overlay') and contains(@style, 'display: block')]", "overlay (visible)"),
+            # 試用到期提示
+            ("//div[contains(@class, 'trial-expired')]", "trial-expired"),
+            ("//div[contains(text(), '試用已到期')]", "試用到期文字"),
         ]
         
-        for popup_xpath in popup_selectors:
+        for xpath, description in popup_selectors:
             try:
-                popup_elements = self.driver.find_elements(By.XPATH, popup_xpath)
+                popup_elements = self.driver.find_elements(By.XPATH, xpath)
                 for popup in popup_elements:
                     if popup.is_displayed():
-                        logger.warning(f"⚠️ 偵測到遮擋元素: {popup_xpath}")
-                        try:
-                            close_btn = popup.find_element(
-                                By.XPATH, 
-                                ".//button[contains(@class, 'close')] | "
-                                ".//span[contains(@class, 'close')] | "
-                                ".//*[contains(text(), '×')]"
-                            )
-                            close_btn.click()
-                            logger.info("✅ 成功關閉遮擋元素")
-                            time.sleep(0.5)
-                        except:
-                            pass
-            except:
+                        # 只在第一次發現時記錄警告
+                        if self.popup_closed_count == 0:
+                            logger.warning(f"⚠️ 偵測到遮擋元素: {description}")
+                        
+                        # 嘗試多種關閉方式
+                        close_methods = [
+                            # 方法1: 尋找關閉按鈕
+                            (".//button[contains(@class, 'close')]", "關閉按鈕"),
+                            (".//span[contains(@class, 'close')]", "關閉span"),
+                            (".//*[contains(text(), '×')]", "×符號"),
+                            (".//*[contains(text(), '關閉')]", "關閉文字"),
+                            (".//button[contains(@class, 'btn-close')]", "btn-close"),
+                            # 方法2: ESC鍵
+                            (None, "ESC鍵"),
+                        ]
+                        
+                        for close_xpath, method in close_methods:
+                            try:
+                                if close_xpath:
+                                    close_btn = popup.find_element(By.XPATH, close_xpath)
+                                    close_btn.click()
+                                    logger.info(f"✅ 成功關閉遮擋元素 ({method})")
+                                    self.popup_closed_count += 1
+                                    popup_closed = True
+                                    time.sleep(0.3)
+                                    break
+                                else:
+                                    # 嘗試 ESC 鍵
+                                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                                    time.sleep(0.3)
+                                    # 檢查是否成功關閉
+                                    if not popup.is_displayed():
+                                        logger.info(f"✅ 成功使用 ESC 鍵關閉遮擋元素")
+                                        self.popup_closed_count += 1
+                                        popup_closed = True
+                                        break
+                            except Exception:
+                                continue
+                        
+                        # 如果無法關閉，嘗試點擊背景
+                        if not popup_closed:
+                            try:
+                                # 點擊彈出視窗外的區域
+                                ActionChains(self.driver).move_by_offset(10, 10).click().perform()
+                                time.sleep(0.3)
+                                if not popup.is_displayed():
+                                    logger.info("✅ 成功透過點擊背景關閉遮擋元素")
+                                    self.popup_closed_count += 1
+                                    popup_closed = True
+                            except:
+                                pass
+            except Exception:
                 continue
+        
+        # 如果有試用到期的提示，可能需要特殊處理
+        if not popup_closed and self.popup_closed_count == 0:
+            try:
+                # 檢查是否有試用到期的訊息
+                trial_messages = self.driver.find_elements(By.XPATH, 
+                    "//div[contains(text(), '試用') or contains(text(), 'trial')]")
+                if trial_messages:
+                    logger.warning("⚠️ 可能遇到試用到期限制，請檢查帳號狀態")
+            except:
+                pass
+        
+        return popup_closed
 
     def _show_summary(self, successful_pages, failed_pages):
         """顯示截圖結果摘要"""

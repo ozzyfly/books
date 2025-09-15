@@ -244,8 +244,32 @@ class BooksCrawler:
         self._save_diagnostic_snapshot("login_no_login_btn")
         return False
 
+    def reset_for_next_book(self):
+        """重置狀態以處理下一本電子書"""
+        try:
+            # 切換回主頁面
+            self.driver.switch_to.default_content()
+            
+            # 重置所有狀態變數
+            self.iframe_switched = False
+            self.tutorial_handled = False
+            self.popup_closed_count = 0
+            self.same_page_count = 0
+            self.last_page_content = None
+            self.current_page_number = None
+            self.output_dir = None
+            
+            logger.info("✅ 狀態已重置，準備處理下一本電子書")
+            
+        except Exception as e:
+            logger.error(f"重置狀態時發生錯誤: {e}")
+    
     def navigate_to_book(self, book_url):
         """導航到電子書頁面 - 改進版"""
+        # 在導航前先重置狀態
+        if self.output_dir is not None:  # 如果不是第一本書
+            self.reset_for_next_book()
+        
         logger.info(f"前往: {book_url}")
         self.driver.get(book_url)
 

@@ -651,6 +651,7 @@ class BooksCrawler:
         max_consecutive_failures = 3
 
         while True:
+            # 若有 total_pages 設定則跳出
             if total_pages is not None and page_num > total_pages:
                 break
             
@@ -664,17 +665,25 @@ class BooksCrawler:
                 failed_pages.append(page_num)
                 consecutive_failures += 1
                 logger.error(f"❌ 第 {page_num} 頁截圖失敗")
-                
                 # 如果連續失敗太多次，停止執行
                 if consecutive_failures >= max_consecutive_failures:
                     logger.error(f"❌ 連續 {max_consecutive_failures} 頁截圖失敗，停止執行。")
                     break
 
+            # 檢查是否有遮擋元素，若有則直接停止本書
+            try:
+                block_elements = self.driver.find_elements(By.XPATH, "//*[contains(@id, 'UiObj-model')]")
+                if any(e.is_displayed() for e in block_elements):
+                    logger.warning("⚠️ 偵測到遮擋元素: //*[contains(@id, 'UiObj-model')]，自動結束本書截圖流程。")
+                    break
+            except Exception:
+                pass
+
             # 嘗試翻頁
             if not self._try_next_page():
                 logger.info(f"📊 已到達最後一頁或無法繼續翻頁")
                 break
-            
+
             print(f"等待 {delay} 秒後截取下一頁...")
             time.sleep(delay)
             page_num += 1

@@ -2,7 +2,6 @@
     "username": "",
     "password": "",
     "headless": false,
-    "browser": "edge",
     "book_url": "",
     "mode": "auto",
     "delay": 3

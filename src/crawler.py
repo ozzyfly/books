@@ -8,7 +8,7 @@ import logging
 import platform
 from pathlib import Path
 from datetime import datetime
-from PIL import Image # 新增 Image 模組
+from PIL import Image
 
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
@@ -17,9 +17,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.edge.service import Service as EdgeService
-from selenium.webdriver.firefox.service import Service as FirefoxService
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
@@ -28,7 +26,7 @@ logger.setLevel(logging.WARNING)
 class BooksCrawler:
     def __init__(self, config):
         self.config = config
-        self.email = self.config.get('email')  # 修改為 email
+        self.email = self.config.get('email')
         self.password = self.config.get('password')
         self.headless = self.config.get('headless', False)
         self.driver = None
@@ -39,91 +37,39 @@ class BooksCrawler:
         self.setup_driver()
 
     def setup_driver(self):
-        """根據設定檔動態設定 WebDriver"""
-        browser = self.config.get('browser', 'firefox').lower()
-        logger.info(f"使用 {browser.capitalize()} WebDriver")
-
+        """只啟動 Edge WebDriver"""
+        logger.info("使用 Edge WebDriver")
         try:
-            if browser == 'chrome':
-                options = webdriver.ChromeOptions()
-                options.add_argument('--window-size=1920,1080')
-                options.add_argument('--disable-extensions')
-                options.add_argument('--disable-gpu')
-                options.add_argument('--disable-dev-shm-usage')
-                options.add_argument('--disable-infobars')
-                options.add_argument('--disable-notifications')
-                options.add_argument('--disable-blink-features=AutomationControlled')
-                options.add_argument('--disable-animations')
-                options.add_experimental_option('prefs', {
-                    'profile.default_content_setting_values.notifications': 2,
-                    'profile.default_content_setting_values.automatic_downloads': 1,
-                    'profile.default_content_setting_values.popups': 2,
-                    'profile.default_content_setting_values.geolocation': 2,
-                    'profile.default_content_setting_values.media_stream': 2,
-                    'profile.default_content_setting_values.plugins': 2,
-                    'profile.default_content_setting_values.images': 2
-                })
-                if self.headless:
-                    options.add_argument('--headless')
-                service = ChromeService()
-                self.driver = webdriver.Chrome(service=service, options=options)
-
-            elif browser == 'edge':
-                options = webdriver.EdgeOptions()
-                options.add_argument('--window-size=1920,1080')
-                options.add_argument('--no-sandbox')
-                options.add_argument('--disable-gpu')
-                options.add_argument('--disable-dev-shm-usage')
-                options.add_argument('--disable-extensions')
-                options.add_argument('--disable-infobars')
-                options.add_argument('--disable-notifications')
-                options.add_argument('--disable-blink-features=AutomationControlled')
-                options.add_argument('--disable-animations')
-                options.add_argument('--remote-debugging-port=9222')
-                if self.headless:
-                    options.add_argument('--headless')
-                webdriver_path = self.config.get('webdriver_path')
-                # 檢查使用者是否在 config.json 中手動指定了 WebDriver 的路徑。
-                # 這是為了解決 Selenium Manager 在某些網路環境（例如有特殊 DNS 設定或防火牆）
-                # 下自動下載 WebDriver 失敗的問題。
-                # 如果提供了有效的路徑，則使用該路徑來初始化 WebDriver 服務。
-                if webdriver_path and os.path.exists(webdriver_path):
-                    logger.info(f"使用指定的 WebDriver: {webdriver_path}")
-                    service = EdgeService(executable_path=webdriver_path)
-                else:
-                    # 如果未提供路徑或路徑無效，則退回使用 Selenium Manager 的預設行為，
-                    # 它會嘗試自動下載並管理 WebDriver。
-                    logger.info("未指定或找不到 WebDriver 路徑，將使用 Selenium Manager。")
-                    service = EdgeService()
-                self.driver = webdriver.Edge(service=service, options=options)
-
-            else:  # Default to firefox
-                options = webdriver.FirefoxOptions()
-                options.add_argument('--width=1920')
-                options.add_argument('--height=1080')
-                options.set_preference('dom.webnotifications.enabled', False)
-                options.set_preference('dom.disable_open_during_load', True)
-                options.set_preference('permissions.default.image', 2)
-                options.set_preference('dom.ipc.plugins.enabled', False)
-                options.set_preference('dom.ipc.plugins.flash.subprocess.crashreporter.enabled', False)
-                options.set_preference('dom.ipc.plugins.reportCrashURL', False)
-                options.set_preference('browser.tabs.animate', False)
-                options.set_preference('toolkit.cosmeticAnimations.enabled', False)
-                if self.headless:
-                    options.add_argument('--headless')
-                # Firefox 優化設定
-                options.set_preference("dom.webdriver.enabled", False)
-                options.set_preference('useAutomationExtension', False)
-                service = FirefoxService(log_output='geckodriver.log')
-                self.driver = webdriver.Firefox(service=service, options=options)
-
+            options = webdriver.EdgeOptions()
+            options.add_argument('--window-size=1920,1080')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-infobars')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--disable-animations')
+            options.add_argument('--remote-debugging-port=9222')
+            
+            if self.headless:
+                options.add_argument('--headless')
+            
+            webdriver_path = self.config.get('webdriver_path')
+            if webdriver_path and os.path.exists(webdriver_path):
+                logger.info(f"使用指定的 WebDriver: {webdriver_path}")
+                service = EdgeService(executable_path=webdriver_path)
+            else:
+                logger.info("未指定或找不到 WebDriver 路徑，將使用 Selenium Manager。")
+                service = EdgeService()
+            
+            self.driver = webdriver.Edge(service=service, options=options)
             self.wait = WebDriverWait(self.driver, 5)
             self.driver.set_page_load_timeout(60)
-
-            logger.info(f"✅ {browser.capitalize()} WebDriver 啟動成功")
-
+            logger.info("✅ Edge WebDriver 啟動成功")
+            
         except Exception as e:
-            logger.error(f"❌ {browser.capitalize()} WebDriver 啟動失敗: {e}")
+            logger.error(f"❌ Edge WebDriver 啟動失敗: {e}")
             if "Could not reach host" in str(e):
                 logger.error("="*60)
                 logger.error("無法下載 WebDriver，這通常是網路連線問題。")
@@ -141,111 +87,22 @@ class BooksCrawler:
 
         try:
             # 步驟 0：處理彈出式視窗
-            try:
-                logger.info("步驟 0/5：檢查彈出式視窗...")
-                close_selectors = [
-                    (By.ID, "close_top_banner"),
-                    (By.CSS_SELECTOR, "button.close"),
-                    (By.XPATH, "//button[contains(text(), '關閉')]")
-                ]
-                for by, value in close_selectors:
-                    try:
-                        close_button = WebDriverWait(self.driver, 2).until(
-                            EC.element_to_be_clickable((by, value))
-                        )
-                        close_button.click()
-                        logger.info(f"✅ 步驟 0/5：偵測到並關閉彈窗 ({by}, {value})。")
-                        break
-                    except Exception:
-                        continue
-            except Exception:
-                logger.info("ℹ️ 步驟 0/5：未偵測到彈出式視窗，繼續執行。")
+            self._handle_popups()
 
             # 步驟一：點擊「會員登入」
-            logger.info("步驟 1/5：等待『會員登入』按鈕...")
-            login_selectors = [
-                (By.CSS_SELECTOR, "span.member_class_name"),
-                (By.LINK_TEXT, "會員登入"),
-                (By.XPATH, "//span[contains(text(), '會員登入')]")
-            ]
-            login_link = None
-            for by, value in login_selectors:
-                try:
-                    login_link = self.driver.find_element(by, value)
-                    login_link.click()
-                    break
-                except Exception:
-                    continue
-            if not login_link:
-                logger.error("❌ 找不到『會員登入』按鈕。")
-                self._save_diagnostic_snapshot("login_no_login_button")
+            if not self._click_login_link():
                 return False
 
             # 步驟二：填寫帳號
-            logger.info("步驟 2/5：等待帳號輸入框...")
-            username_selectors = [
-                (By.ID, "login_id_width01"),
-                (By.NAME, "login_id"),
-                (By.CSS_SELECTOR, "input[type='text']")
-            ]
-            username_input = None
-            for by, value in username_selectors:
-                try:
-                    username_input = self.driver.find_element(by, value)
-                    username_input.clear()
-                    email_value = self.email or self.config.get("email")
-                    if not email_value:
-                        logger.error("❌ 未設定 email，請檢查 config.json。")
-                        return False
-                    username_input.send_keys(email_value)
-                    break
-                except Exception:
-                    continue
-            if not username_input:
-                logger.error("❌ 找不到帳號輸入框。")
-                self._save_diagnostic_snapshot("login_no_username_input")
+            if not self._fill_username():
                 return False
 
             # 步驟三：填寫密碼
-            logger.info("步驟 3/5：等待密碼輸入框...")
-            password_selectors = [
-                (By.ID, "login_pswd"),
-                (By.NAME, "login_pswd"),
-                (By.CSS_SELECTOR, "input[type='password']")
-            ]
-            password_input = None
-            for by, value in password_selectors:
-                try:
-                    password_input = self.driver.find_element(by, value)
-                    password_input.clear()
-                    password_input.send_keys(self.config["password"])
-                    break
-                except Exception:
-                    continue
-            if not password_input:
-                logger.error("❌ 找不到密碼輸入框。")
-                self._save_diagnostic_snapshot("login_no_password_input")
+            if not self._fill_password():
                 return False
 
             # 步驟四：點擊「登入」按鈕以觸發 CAPTCHA
-            logger.info("步驟 4/5：等待『登入』按鈕...")
-            login_btn_selectors = [
-                (By.ID, "show-captcha"),
-                (By.ID, "login_btn"),
-                (By.CSS_SELECTOR, "button[type='submit']"),
-                (By.XPATH, "//button[contains(text(), '登入')]")
-            ]
-            login_button = None
-            for by, value in login_btn_selectors:
-                try:
-                    login_button = self.driver.find_element(by, value)
-                    login_button.click()
-                    break
-                except Exception:
-                    continue
-            if not login_button:
-                logger.error("❌ 找不到『登入』按鈕。")
-                self._save_diagnostic_snapshot("login_no_login_btn")
+            if not self._click_login_button():
                 return False
 
             # 步驟五：人工確認 CAPTCHA 驗證（僅主進程）
@@ -254,8 +111,9 @@ class BooksCrawler:
                 print("🤖 已自動填寫帳密並觸發驗證。")
                 print("請在瀏覽器中手動完成 CAPTCHA 驗證，完成後請按 Enter 繼續...")
                 print("="*60)
-                input() # 等待使用者按 Enter
+                input()  # 等待使用者按 Enter
                 logger.info("🎉 使用者已確認完成手動驗證，繼續執行。")
+            
             return True
 
         except TimeoutException as e:
@@ -267,128 +125,118 @@ class BooksCrawler:
             self._save_diagnostic_snapshot("login_generic_failure")
             return False
 
+    def _handle_popups(self):
+        """處理彈出式視窗"""
         try:
-            # 步驟 0：處理彈出式視窗
+            logger.info("步驟 0/5：檢查彈出式視窗...")
+            close_selectors = [
+                (By.ID, "close_top_banner"),
+                (By.CSS_SELECTOR, "button.close"),
+                (By.XPATH, "//button[contains(text(), '關閉')]")
+            ]
+            for by, value in close_selectors:
+                try:
+                    close_button = WebDriverWait(self.driver, 2).until(
+                        EC.element_to_be_clickable((by, value))
+                    )
+                    close_button.click()
+                    logger.info(f"✅ 步驟 0/5：偵測到並關閉彈窗 ({by}, {value})。")
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            logger.info("ℹ️ 步驟 0/5：未偵測到彈出式視窗，繼續執行。")
+
+    def _click_login_link(self):
+        """點擊會員登入連結"""
+        logger.info("步驟 1/5：等待『會員登入』按鈕...")
+        login_selectors = [
+            (By.CSS_SELECTOR, "span.member_class_name"),
+            (By.LINK_TEXT, "會員登入"),
+            (By.XPATH, "//span[contains(text(), '會員登入')]")
+        ]
+        for by, value in login_selectors:
             try:
-                logger.info("步驟 0/5：檢查彈出式視窗...")
-                close_selectors = [
-                    (By.ID, "close_top_banner"),
-                    (By.CSS_SELECTOR, "button.close"),
-                    (By.XPATH, "//button[contains(text(), '關閉')]"),
-                ]
-                for by, value in close_selectors:
-                    try:
-                        close_button = WebDriverWait(self.driver, 2).until(
-                            EC.element_to_be_clickable((by, value))
-                        )
-                        close_button.click()
-                        logger.info(f"✅ 步驟 0/5：偵測到並關閉彈窗 ({by}, {value})。")
-                        break
-                    except Exception:
-                        continue
+                login_link = self.driver.find_element(by, value)
+                login_link.click()
+                return True
             except Exception:
-                logger.info("ℹ️ 步驟 0/5：未偵測到彈出式視窗，繼續執行。")
+                continue
+        
+        logger.error("❌ 找不到『會員登入』按鈕。")
+        self._save_diagnostic_snapshot("login_no_login_button")
+        return False
 
-            # 步驟一：點擊「會員登入」
-            logger.info("步驟 1/5：等待『會員登入』按鈕...")
-            login_selectors = [
-                (By.CSS_SELECTOR, "span.member_class_name"),
-                (By.LINK_TEXT, "會員登入"),
-                (By.XPATH, "//span[contains(text(), '會員登入')]")
-            ]
-            login_link = None
-            for by, value in login_selectors:
-                try:
-                    login_link = self.driver.find_element(by, value)
-                    login_link.click()
-                    break
-                except Exception:
-                    continue
-            if not login_link:
-                logger.error("❌ 找不到『會員登入』按鈕。")
-                self._save_diagnostic_snapshot("login_no_login_button")
-                return False
-
-            # 步驟二：填寫帳號
-            logger.info("步驟 2/5：等待帳號輸入框...")
-            username_selectors = [
-                (By.ID, "login_id_width01"),
-                (By.NAME, "login_id"),
-                (By.CSS_SELECTOR, "input[type='text']")
-            ]
-            username_input = None
-            for by, value in username_selectors:
-                try:
-                    username_input = self.driver.find_element(by, value)
-                    username_input.clear()
-                    email_value = self.email or self.config.get("email")
-                    if not email_value:
-                        logger.error("❌ 未設定 email，請檢查 config.json。")
-                        return False
-                    username_input.send_keys(email_value)
-                    break
-                except Exception:
-                    continue
-            if not username_input:
-                logger.error("❌ 找不到帳號輸入框。")
-                self._save_diagnostic_snapshot("login_no_username_input")
-                return False
-
-            # 步驟三：填寫密碼
-            logger.info("步驟 3/5：等待密碼輸入框...")
-            password_selectors = [
-                (By.ID, "login_pswd"),
-                (By.NAME, "login_pswd"),
-                (By.CSS_SELECTOR, "input[type='password']")
-            ]
-            password_input = None
-            for by, value in password_selectors:
-                try:
-                    password_input = self.driver.find_element(by, value)
-                    password_input.clear()
-                    password_input.send_keys(self.config["password"])
-                    break
-                except Exception:
-                    continue
-            if not password_input:
-                logger.error("❌ 找不到密碼輸入框。")
-                self._save_diagnostic_snapshot("login_no_password_input")
-                return False
-
-            # 步驟四：點擊「登入」按鈕以觸發 CAPTCHA
-            logger.info("步驟 4/5：等待『登入』按鈕...")
-            login_btn_selectors = [
-                (By.ID, "show-captcha"),
-                (By.ID, "login_btn"),
-                (By.CSS_SELECTOR, "button[type='submit']"),
-                (By.XPATH, "//button[contains(text(), '登入')]")
-            ]
-            login_button = None
-            for by, value in login_btn_selectors:
-                try:
-                    login_button = self.driver.find_element(by, value)
-                    login_button.click()
-                    break
-                except Exception:
-                    continue
-            if not login_button:
-                logger.error("❌ 找不到『登入』按鈕。")
-                self._save_diagnostic_snapshot("login_no_login_btn")
-                return False
-
-            # 步驟五：等待使用者介入
-            logger.info("步驟 5/5：暫停程式，等待使用者手動處理 CAPTCHA...")
-            # CAPTCHA 驗證步驟已略過，流程自動繼續
-            return True
-
-        except TimeoutException as e:
-            logger.error(f"❌ 登入流程中的某個元素等待逾時: {e}", exc_info=True)
-            self._save_diagnostic_snapshot("login_timeout_failure")
+    def _fill_username(self):
+        """填寫使用者名稱"""
+        logger.info("步驟 2/5：等待帳號輸入框...")
+        username_selectors = [
+            (By.ID, "login_id_width01"),
+            (By.NAME, "login_id"),
+            (By.CSS_SELECTOR, "input[type='text']")
+        ]
+        
+        email_value = self.email or self.config.get("email")
+        if not email_value:
+            logger.error("❌ 未設定 email，請檢查 config.json。")
             return False
-        except Exception as e:
-            logger.error(f"❌ 登入流程失敗: {e}", exc_info=True)
-            self._save_diagnostic_snapshot("login_generic_failure")
-            return False
+        
+        for by, value in username_selectors:
+            try:
+                username_input = self.driver.find_element(by, value)
+                username_input.clear()
+                username_input.send_keys(email_value)
+                return True
+            except Exception:
+                continue
+        
+        logger.error("❌ 找不到帳號輸入框。")
+        self._save_diagnostic_snapshot("login_no_username_input")
+        return False
+
+    def _fill_password(self):
+        """填寫密碼"""
+        logger.info("步驟 3/5：等待密碼輸入框...")
+        password_selectors = [
+            (By.ID, "login_pswd"),
+            (By.NAME, "login_pswd"),
+            (By.CSS_SELECTOR, "input[type='password']")
+        ]
+        
+        for by, value in password_selectors:
+            try:
+                password_input = self.driver.find_element(by, value)
+                password_input.clear()
+                password_input.send_keys(self.config["password"])
+                return True
+            except Exception:
+                continue
+        
+        logger.error("❌ 找不到密碼輸入框。")
+        self._save_diagnostic_snapshot("login_no_password_input")
+        return False
+
+    def _click_login_button(self):
+        """點擊登入按鈕"""
+        logger.info("步驟 4/5：等待『登入』按鈕...")
+        login_btn_selectors = [
+            (By.ID, "show-captcha"),
+            (By.ID, "login_btn"),
+            (By.CSS_SELECTOR, "button[type='submit']"),
+            (By.XPATH, "//button[contains(text(), '登入')]")
+        ]
+        
+        for by, value in login_btn_selectors:
+            try:
+                login_button = self.driver.find_element(by, value)
+                login_button.click()
+                return True
+            except Exception:
+                continue
+        
+        logger.error("❌ 找不到『登入』按鈕。")
+        self._save_diagnostic_snapshot("login_no_login_btn")
+        return False
 
     def navigate_to_book(self, book_url):
         """導航到電子書頁面 - 改進版"""
@@ -410,45 +258,82 @@ class BooksCrawler:
         self.output_dir = Path(f"output/ebook_{timestamp}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"輸出目錄: {self.output_dir}")
+        
+        # 自動列出所有 button/a 標籤資訊
+        self.list_all_buttons_and_links()
 
-    def _click_tutorial_next_button(self, selectors, step_count):
+    def list_all_buttons_and_links(self):
         """
-        輔助函式：嘗試使用多個選擇器策略來尋找並點擊教學引導的「下一步」按鈕。
-
-        Args:
-            selectors (list): 一個包含 (By, value) 元組的列表，定義了多種尋找按鈕的策略。
-            step_count (int): 目前的步驟計數，主要用於日誌記錄和偵錯截圖。
-
-        Returns:
-            bool: 如果成功找到並點擊按鈕，返回 True；否則返回 False。
+        診斷方法：列出頁面上所有的按鈕和連結
+        用於調試和理解頁面結構
         """
-        for by, value in selectors:
-            try:
-                # 使用 WebDriverWait 等待按鈕可被點擊，取代固定等待
-                button = WebDriverWait(self.driver, 2).until(
-                    EC.element_to_be_clickable((by, value))
-                )
-                logger.info(f"🖱️ 找到教學按鈕 (策略: {by}='{value}')，正在點擊第 {step_count} 次...")
-                button.click()
+        try:
+            logger.info("🔍 開始掃描頁面上的按鈕和連結...")
+            
+            # 儲存到診斷目錄
+            diag_dir = self.output_dir or Path("output/diagnostics")
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 掃描所有按鈕
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            logger.info(f"📝 找到 {len(buttons)} 個按鈕:")
+            
+            button_info = []
+            for idx, btn in enumerate(buttons[:20], 1):  # 限制顯示前20個
+                try:
+                    btn_id = btn.get_attribute('id')
+                    btn_class = btn.get_attribute('class')
+                    btn_text = btn.text.strip()[:50]  # 限制文字長度
+                    btn_visible = btn.is_displayed()
+                    btn_enabled = btn.is_enabled()
+                    
+                    info = f"  [{idx}] ID: {btn_id or 'N/A'}, Class: {btn_class or 'N/A'}, Text: '{btn_text}', Visible: {btn_visible}, Enabled: {btn_enabled}"
+                    logger.info(info)
+                    button_info.append(info)
+                except Exception as e:
+                    logger.debug(f"  [{idx}] 無法獲取按鈕資訊: {e}")
+            
+            # 掃描所有連結
+            links = self.driver.find_elements(By.TAG_NAME, "a")
+            logger.info(f"📝 找到 {len(links)} 個連結:")
+            
+            link_info = []
+            for idx, link in enumerate(links[:20], 1):  # 限制顯示前20個
+                try:
+                    link_href = link.get_attribute('href')
+                    link_text = link.text.strip()[:50]  # 限制文字長度
+                    link_visible = link.is_displayed()
+                    
+                    info = f"  [{idx}] Href: {link_href or 'N/A'}, Text: '{link_text}', Visible: {link_visible}"
+                    logger.info(info)
+                    link_info.append(info)
+                except Exception as e:
+                    logger.debug(f"  [{idx}] 無法獲取連結資訊: {e}")
+            
+            # 將診斷資訊寫入檔案
+            diag_file = diag_dir / "page_elements_diagnostic.txt"
+            with open(diag_file, "w", encoding="utf-8") as f:
+                f.write(f"頁面元素診斷報告\n")
+                f.write(f"時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"URL: {self.driver.current_url}\n")
+                f.write("="*60 + "\n\n")
                 
-                # 已移除教學引導截圖
-
-                # 短暫等待動畫效果
-                time.sleep(0.1)
-                return True
-            except Exception:
-                # 如果這個選擇器失敗，繼續嘗試下一個
-                continue
-        return False
+                f.write(f"按鈕 (共 {len(buttons)} 個):\n")
+                for info in button_info:
+                    f.write(info + "\n")
+                
+                f.write(f"\n連結 (共 {len(links)} 個):\n")
+                for info in link_info:
+                    f.write(info + "\n")
+            
+            logger.info(f"📄 診斷資訊已儲存至: {diag_file}")
+            
+        except Exception as e:
+            logger.warning(f"❌ 列出按鈕和連結時發生錯誤: {e}")
 
     def handle_tutorial(self):
         """
         自動化處理電子書閱讀器初始可能出現的教學引導畫面。
-
-        此方法會：
-        1. 使用多種策略尋找「下一步」按鈕。
-        2. 持續點擊直到教學結束 (按鈕消失)。
-        3. 包含重試機制，以應對頁面載入延遲等問題。
         """
         max_retries = 3
         for i in range(max_retries):
@@ -470,27 +355,42 @@ class BooksCrawler:
                 while step_count < 10:  # 最多點擊10次以防無限迴圈
                     step_count += 1
                     if not self._click_tutorial_next_button(selectors, step_count):
-                        # 如果返回 False，表示所有選擇器都試過且找不到按鈕
-                        if step_count > 1:  # step_count 從 1 開始，所以 > 1 表示至少點擊過一次
+                        if step_count > 1:
                             logger.info(f"✅ 教學引導處理完畢，總共點擊了 {step_count - 1} 次。")
                         else:
                             logger.info("ℹ️ 未找到任何教學引導按鈕，繼續執行。")
-                        break  # 跳出 while 迴圈
+                        break
                 
                 logger.info(f"✅ 第 {i + 1} 次嘗試成功，結束教學引導處理。")
-                return  # 成功處理後，結束整個函式
+                return
 
             except Exception as e:
                 logger.warning(f"❌ 處理教學引導時發生錯誤 (第 {i + 1} 次嘗試): {e}")
                 if i < max_retries - 1:
                     logger.info("🔄 正在重新整理頁面並重試...")
                     self.driver.refresh()
-                    time.sleep(1)  # 等待頁面重新載入
+                    time.sleep(1)
                 else:
                     logger.error(f"❌ 在 {max_retries} 次嘗試後，處理教學引導失敗。")
-                    # 使用一致的診斷快照功能
                     self._save_diagnostic_snapshot("tutorial_handling_failed")
                     logger.info("ℹ️ 將繼續執行後續步驟...")
+
+    def _click_tutorial_next_button(self, selectors, step_count):
+        """
+        輔助函式：嘗試使用多個選擇器策略來尋找並點擊教學引導的「下一步」按鈕。
+        """
+        for by, value in selectors:
+            try:
+                button = WebDriverWait(self.driver, 2).until(
+                    EC.element_to_be_clickable((by, value))
+                )
+                logger.info(f"🖱️ 找到教學按鈕 (策略: {by}='{value}')，正在點擊第 {step_count} 次...")
+                button.click()
+                time.sleep(0.1)
+                return True
+            except Exception:
+                continue
+        return False
 
     def find_and_switch_to_ebook_iframe(self):
         """精準定位並切換到電子書 iframe，並驗證內部內容"""
@@ -504,14 +404,17 @@ class BooksCrawler:
             all_iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
             logger.info(f"頁面上找到 {len(all_iframes)} 個 iframe:")
             for idx, iframe in enumerate(all_iframes):
-                logger.info(f"  [{idx+1}] id={iframe.get_attribute('id')}, class={iframe.get_attribute('class')}, name={iframe.get_attribute('name')}, src={iframe.get_attribute('src')}")
+                logger.info(f"  [{idx+1}] id={iframe.get_attribute('id')}, "
+                          f"class={iframe.get_attribute('class')}, "
+                          f"name={iframe.get_attribute('name')}, "
+                          f"src={iframe.get_attribute('src')}")
 
-            # 3. 嘗試多種選擇器，每個重試 10 秒（依據診斷結果優化）
+            # 3. 嘗試多種選擇器
             iframe_selectors = [
-                "iframe[id^='epubjs-view-']",  # 最精準
-                "iframe[enable-annotation='true']",  # 屬性標記
-                "div.epub-container iframe",  # 父容器
-                "iframe[class*='epub']",  # epub 相關 class
+                "iframe[id^='epubjs-view-']",
+                "iframe[enable-annotation='true']",
+                "div.epub-container iframe",
+                "iframe[class*='epub']",
                 "iframe[class*='book']",
                 "iframe[src*='book']",
                 "iframe[title*='book']",
@@ -519,41 +422,40 @@ class BooksCrawler:
                 "iframe[id*='page']",
                 "iframe[class*='page']",
                 "iframe[id*='spread']",
-                "iframe",  # 最後嘗試任何 iframe
+                "iframe",
             ]
+            
             for selector in iframe_selectors:
                 try:
                     logger.info(f"嘗試 iframe 選擇器: {selector}")
                     found = False
                     for _ in range(10):
                         try:
-                            self.wait.until(EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, selector)))
+                            self.wait.until(EC.frame_to_be_available_and_switch_to_it(
+                                (By.CSS_SELECTOR, selector)))
                             found = True
                             break
                         except Exception:
                             time.sleep(1)
+                    
                     if not found:
                         raise Exception("iframe not found after retries")
+                    
                     logger.info(f"✅ 已成功切換到電子書 iframe: {selector}")
                     # 驗證 iframe 內容
-                    self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "body > div, body > *")))
+                    self.wait.until(EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "body > div, body > *")))
                     logger.info("✅ iframe 內部內容驗證成功。")
                     return True
+                    
                 except Exception as e:
                     logger.warning(f"❌ 切換失敗: {selector} ({e})")
                     self.driver.switch_to.default_content()
-            logger.error("❌ 所有 iframe 選擇器都失敗了，已儲存診斷快照與原始碼。請檢查 output/diagnostics 目錄。")
+            
+            logger.error("❌ 所有 iframe 選擇器都失敗了，已儲存診斷快照與原始碼。")
             self.diagnose_page_structure()
-            # 額外儲存截圖
-            try:
-                diag_dir = self.output_dir or Path("output/diagnostics")
-                diag_dir.mkdir(parents=True, exist_ok=True)
-                screenshot_path = diag_dir / "iframe_detection_failed.png"
-                self.driver.save_screenshot(str(screenshot_path))
-                logger.info(f"📸 已儲存 iframe 偵測失敗截圖: {screenshot_path}")
-            except Exception as e:
-                logger.warning(f"❌ 儲存診斷截圖失敗: {e}")
             return False
+            
         except Exception as e:
             logger.error(f"iframe 處理過程中發生嚴重錯誤: {e}", exc_info=True)
             return False
@@ -562,10 +464,8 @@ class BooksCrawler:
         """當找不到指定的 iframe 時，執行此函式來診斷頁面結構。"""
         logger.info("🕵️‍♂️ 開始進行頁面結構診斷...")
 
-        # 確保切換回主內容
         self.driver.switch_to.default_content()
 
-        # 建立診斷檔案的儲存路徑
         diag_dir = self.output_dir or Path("output/diagnostics")
         diag_dir.mkdir(parents=True, exist_ok=True)
         
@@ -607,17 +507,14 @@ class BooksCrawler:
         for attempt in range(max_retries):
             try:
                 logger.info(
-                    f"📸 截圖第 {page_num} 頁 (嘗試 {attempt + 1}/{max_retries}) {'(全頁)' if full_page else ''}")
+                    f"📸 截圖第 {page_num} 頁 (嘗試 {attempt + 1}/{max_retries}) "
+                    f"{'(全頁)' if full_page else ''}")
 
-                # 確保在正確的 frame 中 (此函式現在已包含內部驗證)
+                # 確保在正確的 frame 中
                 if not self.find_and_switch_to_ebook_iframe():
-                    # 如果找不到 iframe，切換回主內容並嘗試截取整個頁面
                     self.driver.switch_to.default_content()
                     logger.warning("⚠️ 未能切換到電子書 iframe，將嘗試截取整個頁面。")
-                    # 即使 iframe 失敗，仍繼續嘗試截圖主頁面，而不是直接失敗
                 
-                # 等待內容穩定的邏輯已移至 find_and_switch_to_ebook_iframe，此處不再需要
-
                 # 截圖路徑
                 screenshot_path = self.output_dir / f"page_{page_num:04d}.png"
 
@@ -626,7 +523,7 @@ class BooksCrawler:
                     success = self.capture_full_page_screenshot(str(screenshot_path))
                 else:
                     self.driver.save_screenshot(str(screenshot_path))
-                    success = screenshot_path.exists() and screenshot_path.stat().st_size > 1024 # 確保檔案大小至少 > 1KB
+                    success = screenshot_path.exists() and screenshot_path.stat().st_size > 1024
 
                 # 驗證截圖檔案
                 if success:
@@ -661,13 +558,17 @@ class BooksCrawler:
             while current_position < total_height:
                 # 滾動到當前位置
                 self.driver.execute_script(f"window.scrollTo(0, {current_position});")
-                time.sleep(0.1) # 等待滾動和渲染
+                time.sleep(0.2)  # 等待滾動和渲染
 
                 # 截圖當前可視區域
-                temp_screenshot_path = self.output_dir / "temp_part.png"
+                temp_screenshot_path = self.output_dir / f"temp_part_{len(screenshots)}.png"
                 self.driver.save_screenshot(str(temp_screenshot_path))
-                screenshots.append(Image.open(temp_screenshot_path))
-                os.remove(temp_screenshot_path) # 移除臨時檔案
+                
+                # 開啟並儲存圖片
+                img = Image.open(temp_screenshot_path)
+                screenshots.append(img.copy())
+                img.close()
+                os.remove(temp_screenshot_path)  # 移除臨時檔案
 
                 current_position += viewport_height
 
@@ -676,18 +577,14 @@ class BooksCrawler:
                 logger.error("❌ 未能截取任何部分截圖。")
                 return False
 
-            # 計算最終圖片的高度
-            # 這裡需要考慮到最後一張截圖可能不是完整視窗高度
-            final_height = sum(img.height for img in screenshots)
-            
             # 創建一個新的空白圖片，用於拼接
-            full_image = Image.new('RGB', (viewport_width, final_height))
+            full_image = Image.new('RGB', (viewport_width, total_height))
 
             y_offset = 0
             for img in screenshots:
                 full_image.paste(img, (0, y_offset))
                 y_offset += img.height
-                img.close() # 關閉圖片檔案
+                img.close()
 
             full_image.save(filename)
             logger.info(f"✅ 全頁截圖成功: {filename}")
@@ -700,8 +597,13 @@ class BooksCrawler:
     def smart_next_page(self):
         """智慧翻頁方法"""
         try:
+            # 優先切換回主內容
+            self.driver.switch_to.default_content()
+            
             # 方法1: 嘗試點擊下一頁按鈕
             next_buttons = [
+                "//button[@id='UiObj-book-right-btn']",
+                "//button[contains(@class, 'viewer__body__pagination') and contains(@class, 'right')]",
                 "//button[contains(@class, 'next')]",
                 "//button[contains(@class, 'right')]",
                 "//div[contains(@class, 'viewer-right')]",
@@ -710,17 +612,14 @@ class BooksCrawler:
                 "//*[@id='next-page']"
             ]
 
-            # 優先切換回主內容
-            self.driver.switch_to.default_content()
             for xpath in next_buttons:
                 try:
-                    # 使用 WebDriverWait 提高穩定性
                     next_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
                     next_btn.click()
                     logger.info(f"✅ 成功點擊翻頁按鈕 (策略: {xpath})")
                     return True
                 except Exception:
-                    continue # 嘗試下一個策略
+                    continue
 
             # 方法2: 使用鍵盤右鍵
             ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
@@ -730,6 +629,146 @@ class BooksCrawler:
         except Exception as e:
             logger.error(f"翻頁失敗: {e}")
             return False
+
+    def auto_capture_mode(self, total_pages=None, delay=5):
+        """自動截圖模式 - 智慧分頁版"""
+        print("\n" + "="*60)
+        print("📸 自動截圖模式 (智慧分頁)")
+        print("="*60)
+        print(f"⏱️ 每頁間隔 {delay} 秒")
+        print("="*60)
+        print("\n✅ 已自動開始截圖流程...")
+        
+        # 確保已切換到 iframe
+        if not self.find_and_switch_to_ebook_iframe():
+            logger.error("❌ 無法開始截圖，因為找不到電子書 iframe。")
+            return
+
+        page_num = 1
+        successful_pages = 0
+        failed_pages = []
+        consecutive_failures = 0
+        max_consecutive_failures = 3
+
+        while True:
+            if total_pages is not None and page_num > total_pages:
+                break
+            
+            print(f"\n進度: [第 {page_num} 頁]")
+            
+            # 截圖當前頁面
+            if self.capture_page_with_retry(page_num, full_page=self.full_page_screenshot):
+                successful_pages += 1
+                consecutive_failures = 0
+            else:
+                failed_pages.append(page_num)
+                consecutive_failures += 1
+                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
+                
+                # 如果連續失敗太多次，停止執行
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(f"❌ 連續 {max_consecutive_failures} 頁截圖失敗，停止執行。")
+                    break
+
+            # 嘗試翻頁
+            if not self._try_next_page():
+                logger.info(f"📊 已到達最後一頁或無法繼續翻頁")
+                break
+            
+            print(f"等待 {delay} 秒後截取下一頁...")
+            time.sleep(delay)
+            page_num += 1
+
+        # 顯示結果摘要
+        self._show_summary(successful_pages, failed_pages)
+
+    def _try_next_page(self):
+        """嘗試翻到下一頁"""
+        try:
+            self.driver.switch_to.default_content()
+            
+            # 檢查並關閉彈出視窗
+            self._close_popups()
+            
+            # 博客來電子書專用翻頁按鈕選擇器
+            next_buttons_xpaths = [
+                "//button[@id='UiObj-book-right-btn']",
+                "//button[contains(@class, 'viewer__body__pagination') and contains(@class, 'right')]",
+                "//button[contains(@class, 'next')]",
+                "//button[contains(@class, 'right')]",
+                "//div[contains(@class, 'viewer-right')]",
+                "//a[contains(@class, 'next')]",
+                "//*[@aria-label='Next page']",
+                "//*[@id='next-page']"
+            ]
+            
+            for xpath in next_buttons_xpaths:
+                try:
+                    next_btn = self.driver.find_element(By.XPATH, xpath)
+                    if next_btn.is_displayed() and next_btn.is_enabled():
+                        next_btn.click()
+                        logger.info(f"✅ 成功點擊翻頁按鈕: {xpath}")
+                        return True
+                except Exception:
+                    continue
+            
+            # 如果都失敗，嘗試使用鍵盤
+            try:
+                ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
+                logger.info("✅ 使用鍵盤右鍵翻頁")
+                return True
+            except Exception:
+                pass
+            
+            logger.warning("❌ 無法找到有效的翻頁按鈕")
+            return False
+            
+        except Exception as e:
+            logger.error(f"翻頁過程發生錯誤: {e}")
+            return False
+
+    def _close_popups(self):
+        """關閉可能的彈出視窗"""
+        popup_selectors = [
+            "//*[contains(@class, 'UiObj-model')]",
+            "//*[contains(@id, 'UiObj-model')]",
+            "//div[contains(@class, 'popup')]",
+            "//div[contains(@class, 'modal')]",
+            "//div[contains(@class, 'overlay')]"
+        ]
+        
+        for popup_xpath in popup_selectors:
+            try:
+                popup_elements = self.driver.find_elements(By.XPATH, popup_xpath)
+                for popup in popup_elements:
+                    if popup.is_displayed():
+                        logger.warning(f"⚠️ 偵測到遮擋元素: {popup_xpath}")
+                        try:
+                            close_btn = popup.find_element(
+                                By.XPATH, 
+                                ".//button[contains(@class, 'close')] | "
+                                ".//span[contains(@class, 'close')] | "
+                                ".//*[contains(text(), '×')]"
+                            )
+                            close_btn.click()
+                            logger.info("✅ 成功關閉遮擋元素")
+                            time.sleep(0.5)
+                        except:
+                            pass
+            except:
+                continue
+
+    def _show_summary(self, successful_pages, failed_pages):
+        """顯示截圖結果摘要"""
+        print("\n" + "="*60)
+        print("📊 截圖完成摘要")
+        print("="*60)
+        print(f"✅ 成功: {successful_pages} 頁")
+        print(f"❌ 失敗: {len(failed_pages)} 頁")
+        if failed_pages:
+            print(f"失敗頁面: {failed_pages}")
+        print(f"📁 檔案位置: {self.output_dir}")
+        print("="*60)
 
     def _save_diagnostic_snapshot(self, filename_prefix):
         """儲存當前頁面的截圖和 HTML 原始碼以供診斷。"""
@@ -752,146 +791,10 @@ class BooksCrawler:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(self.driver.page_source)
             
-            # 移除無效的 get_log 方法，改為提示使用者檢查主日誌檔
-            logger.info("ℹ️ 瀏覽器控制台日誌已重定向到專案根目錄下的 `geckodriver.log` 檔案。")
-            
-            logger.info(f"📸 快照已儲存: {png_path.name}, {html_path.name}")
+            logger.info(f"📸 診斷快照已儲存: {png_path.name}, {html_path.name}")
 
         except Exception as e:
             logger.error(f"❌ 儲存診斷快照失敗 ({filename_prefix}): {e}")
-
-    def auto_capture_mode(self, total_pages=None, delay=5):
-        """自動截圖模式 - 智慧分頁版"""
-        print("\n" + "="*60)
-        print("📸 自動截圖模式 (智慧分頁)")
-        print("="*60)
-        print(f"⏱️ 每頁間隔 {delay} 秒")
-        print("="*60)
-        print("\n✅ 已自動開始截圖流程...")
-        # 確保已切換到 iframe
-        if not self.find_and_switch_to_ebook_iframe():
-            logger.error("❌ 無法開始截圖，因為找不到電子書 iframe。")
-            return
-
-        page_num = 1
-        successful_pages = 0
-        failed_pages = []
-
-        while True:
-            if total_pages is not None and page_num > total_pages:
-                break
-            print(f"\n進度: [第 {page_num} 頁]")
-            if self.capture_page_with_retry(page_num):
-                successful_pages += 1
-            else:
-                failed_pages.append(page_num)
-                logger.error(f"❌ 第 {page_num} 頁截圖失敗")
-
-            # 智慧分頁邏輯：嘗試尋找並點擊下一頁按鈕，如果找不到則結束
-            try:
-                self.driver.switch_to.default_content()
-                
-                # 檢查是否有彈出視窗或遮擋元素
-                popup_selectors = [
-                    "//*[contains(@class, 'UiObj-model')]",
-                    "//*[contains(@id, 'UiObj-model')]",
-                    "//div[contains(@class, 'popup')]",
-                    "//div[contains(@class, 'modal')]",
-                    "//div[contains(@class, 'overlay')]"
-                ]
-                for popup_xpath in popup_selectors:
-                    try:
-                        popup_elements = self.driver.find_elements(By.XPATH, popup_xpath)
-                        for popup in popup_elements:
-                            if popup.is_displayed():
-                                logger.warning(f"⚠️ 偵測到遮擋元素: {popup_xpath}")
-                                # 嘗試關閉彈出視窗
-                                try:
-                                    close_btn = popup.find_element(By.XPATH, ".//button[contains(@class, 'close')] | .//span[contains(@class, 'close')] | .//*[contains(text(), '×')]")
-                                    close_btn.click()
-                                    logger.info("✅ 成功關閉遮擋元素")
-                                    time.sleep(0.5)
-                                except:
-                                    pass
-                    except:
-                        continue
-                
-                # 博客來電子書專用翻頁按鈕選擇器（更精確）
-                next_buttons_xpaths = [
-                    # 博客來電子書專用選擇器
-                    "//button[@id='UiObj-book-right-btn' and contains(@class, 'viewer__body__pagination') and contains(@class, 'right')]",
-                    "//button[@id='UiObj-book-left-btn' and contains(@class, 'viewer__body__pagination') and contains(@class, 'left')]",
-                    "//button[contains(@class, 'viewer__body__pagination') and contains(@class, 'right')]",
-                    "//button[contains(@class, 'viewer__body__pagination') and contains(@class, 'left')]",
-                    # 通用翻頁按鈕選擇器（作為後備）
-                    "//button[contains(@class, 'next')]",
-                    "//button[contains(@class, 'right')]",
-                    "//div[contains(@class, 'viewer-right')]",
-                    "//a[contains(@class, 'next')]",
-                    "//*[@aria-label='Next page']",
-                    "//*[@id='next-page']"
-                ]
-                
-                next_button_found = False
-                attempted_selectors = []
-                
-                for xpath in next_buttons_xpaths:
-                    try:
-                        next_btn = self.driver.find_element(By.XPATH, xpath)
-                        if next_btn.is_displayed() and next_btn.is_enabled():
-                            next_btn.click()
-                            next_button_found = True
-                            logger.info(f"✅ 成功點擊翻頁按鈕: {xpath}")
-                            break
-                        else:
-                            attempted_selectors.append(f"{xpath} (不可見或不可點擊)")
-                    except Exception as e:
-                        attempted_selectors.append(f"{xpath} (未找到: {str(e)[:50]})")
-                        continue
-                
-                if not next_button_found:
-                    logger.warning(f"❌ 無法找到有效的翻頁按鈕，嘗試的選擇器:")
-                    for i, selector in enumerate(attempted_selectors, 1):
-                        logger.warning(f"  {i}. {selector}")
-                    
-                    # 保存診斷資訊
-                    try:
-                        diag_dir = self.output_dir or Path("output/diagnostics")
-                        diag_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        # 保存當前頁面截圖
-                        diag_screenshot = diag_dir / f"page_{page_num:04d}_翻頁失敗.png"
-                        self.driver.save_screenshot(str(diag_screenshot))
-                        
-                        # 保存頁面HTML
-                        diag_html = diag_dir / f"page_{page_num:04d}_翻頁失敗.html"
-                        with open(diag_html, "w", encoding="utf-8") as f:
-                            f.write(self.driver.page_source)
-                            
-                        logger.info(f"📸 診斷檔案已儲存: {diag_screenshot.name}, {diag_html.name}")
-                    except Exception as diag_e:
-                        logger.warning(f"保存診斷檔案失敗: {diag_e}")
-                    
-                    logger.info(f"📊 截圖完成，共截取 {successful_pages} 頁")
-                    break
-                    
-                print(f"等待 {delay} 秒後截取下一頁...")
-                time.sleep(delay)
-                page_num += 1
-            except Exception as e:
-                logger.error(f"翻頁過程發生錯誤: {e}")
-                break
-
-        # 顯示結果摘要
-        print("\n" + "="*60)
-        print("📊 截圖完成摘要")
-        print("="*60)
-        print(f"✅ 成功: {successful_pages} 頁")
-        print(f"❌ 失敗: {len(failed_pages)} 頁")
-        if failed_pages:
-            print(f"失敗頁面: {failed_pages}")
-        print(f"📁 檔案位置: {self.output_dir}")
-
 
     def close(self):
         """關閉瀏覽器"""

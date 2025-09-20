@@ -1,3 +1,4 @@
-selenium==4.15.2
-webdriver-manager==4.0.1
-pathlib2==2.3.7
+selenium>=4.15.0
+Pillow>=10.0.0
+numpy>=1.24.0
+img2pdf>=0.4.4

@@ -7,13 +7,17 @@ import logging
 import platform
 import time
 from pathlib import Path
+
+# 確保可以導入 src 模組
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from src.utils import setup_logging, load_config
 from src.crawler import BooksCrawler
 
 def print_banner():
     """顯示程式橫幅"""
     print("\n" + "="*70)
-    print("📚 博客來電子書截圖工具 v2.0")
+    print("📚 博客來電子書截圖工具 v2.2 (增強版)")
     print("="*70)
     print(f"📌 系統: {platform.system()}")
     print(f"📌 Python: {sys.version.split()[0]}")
@@ -57,6 +61,7 @@ def reset_crawler_state(crawler):
         crawler.same_page_count = 0
         crawler.last_page_content = None
         crawler.current_page_number = None
+        crawler.consecutive_empty_pages = 0
         
         # 清理可能的彈出視窗
         try:
@@ -76,6 +81,9 @@ def main():
     
     # 載入設定
     config = load_config()
+    
+    # 啟用詳細日誌模式
+    config['debug_mode'] = True
     
     # 顯示橫幅
     print_banner()
@@ -129,13 +137,21 @@ def main():
         
         # 取得設定參數
         total_pages = config.get("total_pages", None)  # None 表示自動偵測
-        delay = config.get("delay", 2)
+        delay = config.get("delay", 3)  # 增加預設延遲為3秒
         
         if total_pages:
             print(f"📄 每本書最多截取: {total_pages} 頁")
         else:
             print(f"📄 將自動偵測每本書的總頁數")
         print(f"⏱️ 翻頁延遲: {delay} 秒")
+        
+        # 詢問是否啟用詳細日誌
+        debug_choice = input("\n是否啟用詳細日誌模式？(y/n，預設 y): ").strip().lower()
+        if debug_choice == 'n':
+            logging.getLogger().setLevel(logging.INFO)
+            print("📝 使用一般日誌模式")
+        else:
+            print("📝 使用詳細日誌模式")
         
         # 確認開始
         input("\n按 Enter 開始處理所有電子書...")
@@ -192,13 +208,17 @@ def main():
         print(f"\n❌ 程式發生錯誤: {e}")
         logging.error(f"主程式錯誤: {e}", exc_info=True)
     finally:
-        # 關閉瀏覽器
         try:
+            # 輸出執行摘要
+            print("\n📊 生成執行報告...")
+            crawler.print_execution_summary()
+            
+            # 關閉瀏覽器
             print("\n🔧 正在關閉瀏覽器...")
             crawler.close()
             print("✅ 瀏覽器已關閉")
         except Exception as e:
-            print(f"❌ 關閉瀏覽器時發生錯誤: {e}")
+            print(f"❌ 清理時發生錯誤: {e}")
         
         print("\n👋 程式結束，感謝使用！")
 

@@ -17,7 +17,7 @@ from src.crawler import BooksCrawler
 def print_banner():
     """顯示程式橫幅"""
     print("\n" + "="*70)
-    print("📚 博客來電子書截圖工具 v2.2 (增強版)")
+    print("📚 博客來電子書截圖工具 v2.3")
     print("="*70)
     print(f"📌 系統: {platform.system()}")
     print(f"📌 Python: {sys.version.split()[0]}")
@@ -82,9 +82,6 @@ def main():
     # 載入設定
     config = load_config()
     
-    # 啟用詳細日誌模式
-    config['debug_mode'] = True
-    
     # 顯示橫幅
     print_banner()
     
@@ -137,21 +134,13 @@ def main():
         
         # 取得設定參數
         total_pages = config.get("total_pages", None)  # None 表示自動偵測
-        delay = config.get("delay", 3)  # 增加預設延遲為3秒
+        delay = config.get("delay", 2)  # 預設延遲為2秒
         
         if total_pages:
             print(f"📄 每本書最多截取: {total_pages} 頁")
         else:
             print(f"📄 將自動偵測每本書的總頁數")
         print(f"⏱️ 翻頁延遲: {delay} 秒")
-        
-        # 詢問是否啟用詳細日誌
-        debug_choice = input("\n是否啟用詳細日誌模式？(y/n，預設 y): ").strip().lower()
-        if debug_choice == 'n':
-            logging.getLogger().setLevel(logging.INFO)
-            print("📝 使用一般日誌模式")
-        else:
-            print("📝 使用詳細日誌模式")
         
         # 確認開始
         input("\n按 Enter 開始處理所有電子書...")

@@ -29,7 +29,6 @@ class BooksCrawler:
         self.password = config.get('password')
         self.headless = config.get('headless', False)
         
-        # 設定日誌級別為 INFO
         logger.setLevel(logging.INFO)
         
         self.driver = None
@@ -37,12 +36,12 @@ class BooksCrawler:
         self.output_dir = None
         self.iframe_switched = False
         self.tutorial_handled = False
-        self.same_page_count = 0
-        self.consecutive_empty_pages = 0
+        
+        # 優化的狀態追蹤
+        self.page_hashes = set()
         self.last_page_hash = None
-        self.page_hashes = set()  # 用於追蹤所有已見過的頁面
-        self.book_completed = False  # 標記書籍是否已完成
-        self.last_screenshot_hash = None  # 追蹤最後一張截圖的雜湊值
+        self.no_change_count = 0
+        self.max_no_change = 5  # 減少等待次數
         
         self.setup_driver()
 
@@ -55,7 +54,7 @@ class BooksCrawler:
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-blink-features=AutomationControlled')
-            options.page_load_strategy = 'normal'
+            options.page_load_strategy = 'eager'  # 改為 eager 加快載入
             
             if self.headless:
                 options.add_argument('--headless')
@@ -68,8 +67,8 @@ class BooksCrawler:
             
             self.driver = webdriver.Edge(service=service, options=options)
             self.wait = WebDriverWait(self.driver, 10)
-            self.driver.set_page_load_timeout(60)
-            self.driver.implicitly_wait(5)
+            self.driver.set_page_load_timeout(30)  # 縮短超時時間
+            self.driver.implicitly_wait(3)  # 縮短隱式等待
             logger.info("✅ WebDriver 啟動成功")
             
         except Exception as e:
@@ -226,13 +225,10 @@ class BooksCrawler:
             self.driver.switch_to.default_content()
             self.iframe_switched = False
             self.tutorial_handled = False
-            self.same_page_count = 0
             self.output_dir = None
-            self.consecutive_empty_pages = 0
-            self.last_page_hash = None
-            self.last_screenshot_hash = None
             self.page_hashes.clear()
-            self.book_completed = False
+            self.last_page_hash = None
+            self.no_change_count = 0
         except Exception as e:
             logger.error(f"重置狀態失敗: {e}")
 
@@ -254,7 +250,7 @@ class BooksCrawler:
                 clicked = False
                 for by, value in selectors:
                     try:
-                        button = WebDriverWait(self.driver, 2).until(
+                        button = WebDriverWait(self.driver, 1).until(
                             EC.element_to_be_clickable((by, value))
                         )
                         button.click()
@@ -276,7 +272,6 @@ class BooksCrawler:
         """切換到電子書 iframe"""
         if self.iframe_switched:
             try:
-                # 檢查是否仍在 iframe 中
                 self.driver.find_elements(By.CSS_SELECTOR, "body > div, body > *")
                 return True
             except:
@@ -285,17 +280,14 @@ class BooksCrawler:
         self.driver.switch_to.default_content()
         
         try:
-            # 處理教學引導
             if not self.tutorial_handled:
                 self.handle_tutorial()
                 self.driver.switch_to.default_content()
 
-            # 嘗試切換 iframe
             iframe_selectors = [
                 "iframe[id^='epubjs-view-']",
                 "iframe[enable-annotation='true']",
                 "div.epub-container iframe",
-                "iframe",
             ]
             
             for selector in iframe_selectors:
@@ -303,7 +295,6 @@ class BooksCrawler:
                     self.wait.until(EC.frame_to_be_available_and_switch_to_it(
                         (By.CSS_SELECTOR, selector)))
                     
-                    # 驗證切換成功
                     self.wait.until(EC.presence_of_element_located(
                         (By.CSS_SELECTOR, "body > div, body > *")))
                     
@@ -319,396 +310,360 @@ class BooksCrawler:
             logger.error(f"切換 iframe 失敗: {e}")
             return False
 
-    def _wait_for_content_loaded(self, timeout=8):
-        """等待頁面內容完全載入（加速版）"""
+    def _wait_for_content_loaded(self, timeout=3):
+        """快速等待頁面載入"""
         try:
-            # 快速檢查是否還在載入狀態
-            def not_loading(driver):
-                try:
-                    loading_indicators = [
-                        "div.loading",
-                        "div.spinner",
-                        "*[class*='loading']"
-                    ]
-                    for selector in loading_indicators[:2]:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        for elem in elements:
-                            if elem.is_displayed():
-                                return False
-                    return True
-                except:
-                    return True
-            
-            WebDriverWait(self.driver, 3).until(not_loading)
-            
-            # 等待文字內容出現
-            def has_text_content(driver):
+            # 簡化載入檢查
+            def has_content(driver):
                 try:
                     body = driver.find_element(By.TAG_NAME, "body")
-                    text = body.text.strip()
-                    return len(text) > 10
+                    return len(body.text.strip()) > 10
                 except:
                     return False
             
-            WebDriverWait(self.driver, timeout).until(has_text_content)
+            WebDriverWait(self.driver, timeout).until(has_content)
             
-            # 快速檢查背景色
-            def not_gray_loading(driver):
-                try:
-                    body_color = driver.execute_script(
-                        "return window.getComputedStyle(document.body).backgroundColor"
-                    )
-                    if "rgb(150" in body_color or "rgb(151" in body_color:
-                        return False
-                    return True
-                except:
-                    return True
-            
-            WebDriverWait(self.driver, 2).until(not_gray_loading)
-            
-            # 簡化圖片載入檢查
-            def images_loaded(driver):
-                images = driver.find_elements(By.TAG_NAME, "img")
-                if images:
-                    for img in images[:3]:
-                        try:
-                            src = img.get_attribute("src")
-                            if not src:
-                                continue
-                            complete = driver.execute_script(
-                                "return arguments[0].complete && "
-                                "typeof arguments[0].naturalWidth != 'undefined' && "
-                                "arguments[0].naturalWidth > 0",
-                                img
-                            )
-                            if not complete:
-                                return False
-                        except:
-                            continue
-                return True
-            
-            WebDriverWait(self.driver, 3).until(images_loaded)
-            
-            time.sleep(0.3)
+            # 簡短延遲確保渲染完成
+            time.sleep(0.2)
             return True
             
         except TimeoutException:
             return True
 
     def capture_page_with_retry(self, page_num, max_retries=2):
-        """截圖當前頁面（速度優化版）"""
-        problem_pages = [8, 30, 52, 74, 84, 96]
-        if page_num in problem_pages:
-            logger.info(f"第 {page_num} 頁需要刷新處理...")
-            time.sleep(1)
-            self.driver.refresh()
-            time.sleep(2)
-            self.driver.refresh()
-            time.sleep(2)
-            self.iframe_switched = False
-            max_retries = 3
-        
+        """簡化的截圖函數"""
         for attempt in range(max_retries):
             try:
-                # 檢查 WebDriver 是否還活著
-                try:
-                    self.driver.title
-                except:
-                    logger.error("WebDriver 連線已中斷")
-                    return False
-                
-                # 檢查並切換 iframe
+                # 確保在 iframe 中
                 if not self.iframe_switched:
                     if not self.find_and_switch_to_ebook_iframe():
-                        self.driver.switch_to.default_content()
                         time.sleep(0.5)
                         continue
                 
-                # 等待內容載入
-                wait_time = 8 if page_num in problem_pages else 5
-                if not self._wait_for_content_loaded(timeout=wait_time):
-                    self.iframe_switched = False
-                    time.sleep(0.5)
-                    continue
+                # 快速等待載入
+                self._wait_for_content_loaded()
                 
-                # 執行截圖
+                # 截圖
                 screenshot_path = self.output_dir / f"page_{page_num:04d}.png"
                 self.driver.save_screenshot(str(screenshot_path))
                 
-                # 驗證截圖
+                # 簡單驗證
                 if screenshot_path.exists() and screenshot_path.stat().st_size > 1024:
-                    if not self._validate_screenshot(screenshot_path):
-                        screenshot_path.unlink()
-                        self.iframe_switched = False
-                        logger.warning(f"第 {page_num} 頁截圖無效（灰色畫面），重試中...")
-                        
-                        if attempt == 0:
-                            logger.info(f"刷新第 {page_num} 頁...")
-                            self.driver.refresh()
-                            time.sleep(2)
-                        else:
-                            time.sleep(0.5)
-                        
-                        continue
+                    if self._is_valid_screenshot(screenshot_path):
+                        # 更新頁面雜湊
+                        current_hash = self._get_page_content_hash()
+                        if current_hash:
+                            self.page_hashes.add(current_hash)
+                            self.last_page_hash = current_hash
+                        return True
                     
-                    # 儲存截圖雜湊值
-                    img = Image.open(screenshot_path)
-                    img_hash = hashlib.md5(img.tobytes()).hexdigest()
-                    self.last_screenshot_hash = img_hash
+                    screenshot_path.unlink()
+                    self.iframe_switched = False
                     
-                    # 取得並儲存當前頁面雜湊
-                    current_hash = self._get_page_content_hash()
-                    if current_hash:
-                        self.page_hashes.add(current_hash)
-                        self.last_page_hash = current_hash
-                    
-                    self.consecutive_empty_pages = 0
-                    return True
+                    if attempt == 0:
+                        self.driver.refresh()
+                        time.sleep(1)
                 
             except Exception as e:
                 logger.error(f"截圖失敗: {e}")
                 self.iframe_switched = False
-                if attempt < max_retries - 1:
-                    time.sleep(0.5)
         
-        self.consecutive_empty_pages += 1
         return False
+
+    def _is_valid_screenshot(self, screenshot_path):
+        """快速驗證截圖"""
+        try:
+            img = Image.open(screenshot_path)
+            img_array = np.array(img)
+            avg_color = img_array.mean(axis=(0, 1))
+            
+            # 檢查灰色載入畫面
+            if all(145 < c < 155 for c in avg_color[:3]):
+                if img_array.std() < 15:
+                    return False
+            
+            # 檢查純白或純黑
+            if all(c > 250 for c in avg_color[:3]) or all(c < 5 for c in avg_color[:3]):
+                if img_array.std() < 10:
+                    return False
+            
+            return True
+            
+        except:
+            return True
+
+    def _get_page_content_hash(self):
+        """取得頁面內容雜湊"""
+        try:
+            if self.iframe_switched:
+                text = self.driver.find_element(By.TAG_NAME, "body").text
+            else:
+                self.driver.switch_to.default_content()
+                text = self.driver.find_element(By.TAG_NAME, "body").text
+            
+            if text:
+                return hashlib.md5(text.encode()).hexdigest()
+        except:
+            pass
+        return None
+
+    def _get_screenshot_hash_preview(self):
+        """在截圖前預覽當前頁面內容的雜湊"""
+        try:
+            if self.iframe_switched:
+                # 使用 JavaScript 取得頁面的視覺內容特徵
+                visual_hash = self.driver.execute_script("""
+                    var body = document.body;
+                    var text = body.innerText || body.textContent || '';
+                    var images = document.getElementsByTagName('img');
+                    var imgData = '';
+                    for(var i = 0; i < Math.min(images.length, 5); i++) {
+                        imgData += images[i].src || '';
+                    }
+                    return text + imgData;
+                """)
+                if visual_hash:
+                    return hashlib.md5(visual_hash.encode()).hexdigest()
+        except:
+            pass
+        return None
     
-    def _check_book_completion(self):
-        """檢查是否已到達書籍結尾"""
+    def _get_last_screenshot_hash(self, page_num):
+        """取得最後一張截圖的雜湊值"""
+        try:
+            screenshot_path = self.output_dir / f"page_{page_num:04d}.png"
+            if screenshot_path.exists():
+                img = Image.open(screenshot_path)
+                img_array = np.array(img)
+                # 簡化圖片以減少細微差異的影響
+                simplified = img_array[::10, ::10]  # 降採樣
+                return hashlib.md5(simplified.tobytes()).hexdigest()
+        except Exception as e:
+            logger.error(f"無法取得截圖雜湊: {e}")
+        return None
+
+    def _get_screenshot_hash_preview(self):
+        """在截圖前預覽當前頁面內容的雜湊"""
+        try:
+            if self.iframe_switched:
+                # 使用 JavaScript 取得頁面的視覺內容特徵
+                visual_hash = self.driver.execute_script("""
+                    var body = document.body;
+                    var text = body.innerText || body.textContent || '';
+                    var images = document.getElementsByTagName('img');
+                    var imgData = '';
+                    for(var i = 0; i < Math.min(images.length, 5); i++) {
+                        imgData += images[i].src || '';
+                    }
+                    return text + imgData;
+                """)
+                if visual_hash:
+                    return hashlib.md5(visual_hash.encode()).hexdigest()
+        except:
+            pass
+        return None
+    
+    def _get_last_screenshot_hash(self, page_num):
+        """取得最後一張截圖的雜湊值"""
+        try:
+            screenshot_path = self.output_dir / f"page_{page_num:04d}.png"
+            if screenshot_path.exists():
+                img = Image.open(screenshot_path)
+                img_array = np.array(img)
+                # 簡化圖片以減少細微差異的影響
+                simplified = img_array[::10, ::10]  # 降採樣
+                return hashlib.md5(simplified.tobytes()).hexdigest()
+        except Exception as e:
+            logger.error(f"無法取得截圖雜湊: {e}")
+        return None
+        """檢查是否到達書籍結尾"""
         try:
             self.driver.switch_to.default_content()
             
-            # 檢查完成閱讀的彈窗
+            # 完成提示
             completion_indicators = [
                 "//div[contains(text(), '本書已閱讀完畢')]",
                 "//h2[contains(text(), '本書已閱讀完畢')]",
-                "//div[contains(@class, 'modal')]//div[contains(text(), '本書已閱讀完畢')]",
                 "//button[contains(text(), '擁不為完讀')]",
-                "//button[text()='分享']",
-                "//div[contains(text(), '從中長跑、馬拉松、越野跑')]",
-                "//div[contains(@class, 'modal') and contains(@style, 'display: block')]//div[contains(text(), '本書')]"
             ]
             
             for xpath in completion_indicators:
                 try:
                     element = self.driver.find_element(By.XPATH, xpath)
                     if element.is_displayed():
-                        logger.info("📚 發現「本書已閱讀完畢」提示，確認已到達最後一頁")
-                        self.book_completed = True
+                        logger.info("📚 發現完成提示")
                         return True
                 except:
                     pass
             
-            # 檢查右側翻頁按鈕是否被禁用
+            # 檢查按鈕狀態
             try:
                 next_btn = self.driver.find_element(By.ID, "UiObj-book-right-btn")
-                if next_btn:
-                    is_disabled = next_btn.get_attribute('disabled')
-                    aria_disabled = next_btn.get_attribute('aria-disabled')
-                    classes = next_btn.get_attribute('class') or ''
-                    
-                    if is_disabled == 'true' or aria_disabled == 'true' or 'disabled' in classes:
-                        logger.info("翻頁按鈕已禁用，可能已到達最後")
-                        return True
+                if next_btn.get_attribute('disabled') == 'true':
+                    return True
             except:
                 pass
                 
-        except Exception as e:
-            logger.debug(f"檢查完成狀態時發生錯誤: {e}")
+        except:
+            pass
         
         return False
 
-    def _validate_screenshot(self, screenshot_path):
-        """驗證截圖是否為有效內容"""
+    def _check_book_completion(self):
+        """檢查是否到達書籍結尾"""
         try:
-            img = Image.open(screenshot_path)
-            img_array = np.array(img)
+            self.driver.switch_to.default_content()
             
-            # 計算平均顏色
-            avg_color = img_array.mean(axis=(0, 1))
+            # 完成提示
+            completion_indicators = [
+                "//div[contains(text(), '本書已閱讀完畢')]",
+                "//h2[contains(text(), '本書已閱讀完畢')]",
+                "//button[contains(text(), '擁不為完讀')]",
+            ]
             
-            # 檢查是否為灰色空白頁
-            if all(145 < c < 155 for c in avg_color[:3]):
-                std_dev = img_array.std()
-                if std_dev < 15:
-                    logger.warning("偵測到灰色載入畫面")
-                    return False
+            for xpath in completion_indicators:
+                try:
+                    element = self.driver.find_element(By.XPATH, xpath)
+                    if element.is_displayed():
+                        logger.info("📚 發現完成提示")
+                        return True
+                except:
+                    pass
             
-            # 檢查是否為純白頁面
-            if all(c > 250 for c in avg_color[:3]):
-                std_dev = img_array.std()
-                if std_dev < 10:
-                    logger.warning("偵測到純白空白頁面")
-                    return False
-            
-            # 檢查是否為純黑頁面
-            if all(c < 5 for c in avg_color[:3]):
-                std_dev = img_array.std()
-                if std_dev < 5:
-                    logger.warning("偵測到純黑空白頁面")
-                    return False
-            
-            # 檢查圖片中心區域是否有內容
-            height, width = img_array.shape[:2]
-            center_region = img_array[height//4:3*height//4, width//4:3*width//4]
-            center_std = center_region.std()
-            
-            if center_std < 5:
-                overall_std = img_array.std()
-                if overall_std < 8:
-                    logger.warning("偵測到中心區域無內容")
-                    return False
-                    
-            return True
-            
-        except Exception as e:
-            logger.error(f"驗證截圖失敗: {e}")
-            return True
+            # 檢查按鈕狀態
+            try:
+                next_btn = self.driver.find_element(By.ID, "UiObj-book-right-btn")
+                if next_btn.get_attribute('disabled') == 'true':
+                    return True
+            except:
+                pass
+                
+        except:
+            pass
+        
+        return False
 
-    def _get_page_content_hash(self):
-        """取得當前頁面內容的雜湊值"""
+    def _try_next_page(self):
+        """簡化的翻頁函數"""
         try:
-            if self.iframe_switched:
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text
-            else:
-                self.driver.switch_to.default_content()
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+            self.driver.switch_to.default_content()
             
-            if page_text:
-                return hashlib.md5(page_text.encode()).hexdigest()
-            return None
+            # 嘗試點擊翻頁按鈕
+            try:
+                next_btn = self.driver.find_element(By.ID, "UiObj-book-right-btn")
+                if next_btn.is_displayed() and next_btn.is_enabled():
+                    next_btn.click()
+                    time.sleep(1)
+                    self.iframe_switched = False
+                    return True
+            except:
+                pass
+            
+            # 備用：鍵盤翻頁
+            ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
+            time.sleep(1)
+            self.iframe_switched = False
+            return True
             
         except Exception:
-            return None
+            return False
 
     def auto_capture_mode(self, total_pages=None, delay=1):
-        """自動截圖模式（改良版）"""
+        """優化的自動截圖模式"""
         print("\n📸 自動截圖模式")
-        print(f"⏱️ 每頁間隔 {delay} 秒")
-        print("📚 將自動偵測最後一頁並停止\n")
+        print(f"⏱️ 每頁間隔 {delay} 秒\n")
         
-        # 確保已切換到 iframe
+        # 初始化
         if not self.find_and_switch_to_ebook_iframe():
-            logger.error("無法開始截圖，找不到 iframe")
+            logger.error("無法開始截圖")
             return
 
         page_num = 1
         successful_pages = 0
         failed_pages = []
         
-        self.same_page_count = 0
-        self.consecutive_empty_pages = 0
-        self.last_page_hash = None
-        self.last_screenshot_hash = None
         self.page_hashes.clear()
-        self.book_completed = False
+        self.last_page_hash = None
+        self.no_change_count = 0
         
-        # 用於追蹤翻頁失敗
-        consecutive_no_change = 0
-        max_consecutive_no_change = 10  # 提高閾值，避免過早停止
-        
-        # 用於追蹤重複截圖
+        # 加強的重複頁面偵測
+        last_screenshot_hash = None
         same_screenshot_count = 0
-        last_successful_screenshot_hash = None
-
+        max_same_screenshots = 3  # 連續3張相同截圖就停止
+        
         while True:
+            # 檢查頁數上限
             if total_pages and page_num > total_pages:
+                print(f"\n📚 達到設定頁數上限 {total_pages}")
                 break
             
-            # 檢查是否已完成
-            if self.book_completed:
-                print(f"\n📚 書籍已完成！共 {page_num - 1} 頁")
-                break
+            print(f"第 {page_num} 頁: ", end="")
             
-            print(f"進度: [第 {page_num} 頁]", end=" ")
+            # 截圖前先取得當前頁面內容
+            before_screenshot_hash = self._get_screenshot_hash_preview()
             
-            # 截圖當前頁面
+            # 截圖
             if self.capture_page_with_retry(page_num):
                 successful_pages += 1
                 print("✅")
                 
-                # 檢查截圖是否重複
-                if self.last_screenshot_hash == last_successful_screenshot_hash:
+                # 檢查截圖是否與上一張相同
+                current_screenshot_hash = self._get_last_screenshot_hash(page_num)
+                if current_screenshot_hash and current_screenshot_hash == last_screenshot_hash:
                     same_screenshot_count += 1
-                    logger.debug(f"偵測到重複截圖（第 {same_screenshot_count} 次）")
+                    logger.warning(f"⚠️ 偵測到重複截圖 ({same_screenshot_count}/{max_same_screenshots})")
+                    
+                    if same_screenshot_count >= max_same_screenshots:
+                        print(f"\n📚 連續{max_same_screenshots}張相同截圖，書籍可能已結束於第 {page_num - same_screenshot_count + 1} 頁")
+                        # 刪除重複的截圖
+                        for i in range(1, same_screenshot_count):
+                            dup_path = self.output_dir / f"page_{page_num - i + 1:04d}.png"
+                            if dup_path.exists():
+                                dup_path.unlink()
+                                logger.info(f"已刪除重複截圖: {dup_path.name}")
+                        break
                 else:
                     same_screenshot_count = 0
-                    last_successful_screenshot_hash = self.last_screenshot_hash
-                
-                # 檢查是否有完成提示
-                if self._check_book_completion():
-                    print(f"\n📚 發現「本書已閱讀完畢」，共 {page_num} 頁")
-                    break
-                    
+                    last_screenshot_hash = current_screenshot_hash
             else:
                 failed_pages.append(page_num)
                 print("❌")
-
-            # 嘗試翻頁
+            
+            # 檢查完成狀態
+            if self._check_book_completion():
+                print(f"\n📚 書籍完成，共 {page_num} 頁")
+                break
+            
+            # 記錄當前頁面雜湊
             before_hash = self.last_page_hash
-            page_changed = self._try_next_page()
             
-            if not page_changed:
-                consecutive_no_change += 1
-                logger.info(f"翻頁無變化（第 {consecutive_no_change} 次）")
+            # 翻頁
+            if not self._try_next_page():
+                self.no_change_count += 1
+                logger.info(f"翻頁失敗 ({self.no_change_count}/{self.max_no_change})")
                 
-                # 多次嘗試翻頁
-                if consecutive_no_change == 3:
-                    logger.info("嘗試使用鍵盤翻頁...")
-                    self._keyboard_next_page()
-                    time.sleep(2)
-                elif consecutive_no_change == 5:
-                    logger.info("嘗試強制翻頁...")
-                    self._force_next_page()
-                    time.sleep(2)
-                elif consecutive_no_change == 7:
-                    logger.info("嘗試點擊頁面右側...")
-                    self._click_page_right()
-                    time.sleep(2)
-                
-                # 檢查翻頁後是否有變化
-                after_hash = self._get_page_content_hash()
-                if after_hash and after_hash != before_hash:
-                    consecutive_no_change = 0
-                    logger.info("翻頁成功！")
-                elif consecutive_no_change >= max_consecutive_no_change:
-                    # 最後確認是否真的到達最後
-                    if self._check_book_completion():
-                        print(f"\n📚 確認已到達最後一頁（第 {page_num} 頁）")
-                        break
-                    
-                    # 再次強力嘗試
-                    logger.info("最後嘗試翻頁...")
-                    self._aggressive_next_page()
-                    time.sleep(3)
-                    
-                    final_hash = self._get_page_content_hash()
-                    if final_hash == after_hash:
-                        print(f"\n📚 無法繼續翻頁，已到達最後一頁（第 {page_num} 頁）")
-                        break
-                    else:
-                        consecutive_no_change = 0
-            else:
-                consecutive_no_change = 0
-            
-            # 檢查重複截圖（提高閾值）
-            if same_screenshot_count >= 15:
-                logger.warning(f"連續 {same_screenshot_count} 張相同截圖")
-                
-                # 嘗試強制翻頁
-                self._aggressive_next_page()
-                time.sleep(3)
-                
-                if not self._try_next_page():
-                    if self._check_book_completion():
-                        print(f"\n📚 確認已到達最後一頁（第 {page_num} 頁）")
-                        break
-                    
-                    print(f"\n📚 連續重複內容，可能已到達最後一頁（第 {page_num} 頁）")
+                if self.no_change_count >= self.max_no_change:
+                    print(f"\n📚 無法繼續翻頁，結束於第 {page_num} 頁")
                     break
+                    
+                # 重試翻頁
+                time.sleep(1)
+                ActionChains(self.driver).send_keys(Keys.PAGE_DOWN).perform()
+                time.sleep(1)
+            else:
+                # 檢查頁面是否真的改變
+                time.sleep(0.5)
+                after_hash = self._get_page_content_hash()
+                
+                if after_hash and after_hash == before_hash:
+                    self.no_change_count += 1
+                    logger.info(f"頁面未變化 ({self.no_change_count}/{self.max_no_change})")
+                    
+                    if self.no_change_count >= self.max_no_change:
+                        print(f"\n📚 連續{self.max_no_change}次頁面未變化，結束於第 {page_num} 頁")
+                        break
                 else:
-                    same_screenshot_count = 10  # 降低但不歸零
+                    self.no_change_count = 0
             
             # 延遲
             time.sleep(delay)
@@ -716,298 +671,18 @@ class BooksCrawler:
             
             # 安全上限
             if page_num > 500:
-                print(f"\n⚠️ 已達到安全上限（1000頁），停止截圖")
+                print(f"\n⚠️ 達到安全上限 500 頁")
                 break
         
-        # 重試失敗的頁面
-        if failed_pages:
-            print(f"\n🔄 重試失敗的頁面: {failed_pages[:10]}...")
-            self._retry_failed_pages(failed_pages)
-
+        
         # 顯示結果
-        final_failed = len([p for p in failed_pages if not (self.output_dir / f"page_{p:04d}.png").exists()])
+        actual_pages = len(list(self.output_dir.glob("*.png")))
         print(f"\n📊 截圖完成")
-        print(f"✅ 成功: {successful_pages} 頁")
-        print(f"❌ 最終失敗: {final_failed} 頁")
-        if final_failed > 0:
-            missing_pages = [p for p in failed_pages if not (self.output_dir / f"page_{p:04d}.png").exists()]
-            print(f"缺失頁面: {missing_pages[:20]}")
-        print(f"📁 檔案位置: {self.output_dir}")
-
-    def _try_next_page(self):
-        """嘗試翻到下一頁"""
-        try:
-            self.driver.switch_to.default_content()
-            
-            # 關閉彈窗
-            self._close_popups()
-            
-            # 檢查是否有下一頁按鈕被禁用
-            try:
-                next_btn = self.driver.find_element(By.ID, "UiObj-book-right-btn")
-                if next_btn:
-                    is_disabled = next_btn.get_attribute('disabled')
-                    
-                    # 不要因為按鈕狀態就直接返回 False
-                    # 因為有時候按鈕狀態不準確
-                    if is_disabled == 'true':
-                        logger.debug("下一頁按鈕顯示為禁用狀態")
-            except:
-                pass
-            
-            # 嘗試點擊翻頁按鈕
-            next_clicked = False
-            
-            next_buttons = [
-                "//button[@id='UiObj-book-right-btn']",
-                "//button[contains(@class, 'viewer__body__pagination') and contains(@class, 'right')]",
-                "//button[contains(@class, 'next')]",
-                "//a[contains(@class, 'next')]",
-            ]
-            
-            for xpath in next_buttons:
-                try:
-                    btn = self.driver.find_element(By.XPATH, xpath)
-                    if btn.is_displayed():
-                        btn.click()
-                        next_clicked = True
-                        break
-                except:
-                    pass
-            
-            if not next_clicked:
-                # 嘗試鍵盤翻頁
-                try:
-                    ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
-                    next_clicked = True
-                except:
-                    pass
-            
-            if not next_clicked:
-                return False
-            
-            # 等待新頁面載入
-            time.sleep(2)
-            
-            # 重置 iframe 狀態，這很重要！
-            self.iframe_switched = False
-            
-            # 翻頁動作已執行，假設成功
-            # 不再檢查內容是否改變，因為這個檢查不可靠
-            return True
-            
-        except Exception as e:
-            logger.error(f"翻頁失敗: {e}")
-            return False
-
-    def _keyboard_next_page(self):
-        """使用鍵盤翻頁"""
-        try:
-            self.driver.switch_to.default_content()
-            ActionChains(self.driver).send_keys(Keys.ARROW_RIGHT).perform()
-            time.sleep(1)
-            ActionChains(self.driver).send_keys(Keys.PAGE_DOWN).perform()
-        except:
-            pass
-
-    def _click_page_right(self):
-        """點擊頁面右側區域"""
-        try:
-            self.driver.switch_to.default_content()
-            self.driver.execute_script("""
-                var event = new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: window.innerWidth - 50,
-                    clientY: window.innerHeight / 2
-                });
-                document.body.dispatchEvent(event);
-            """)
-        except:
-            pass
-
-    def _force_next_page(self):
-        """強制翻頁（使用 JavaScript）"""
-        try:
-            self.driver.switch_to.default_content()
-            
-            scripts = [
-                "document.querySelector('#UiObj-book-right-btn').click()",
-                "document.querySelector('.viewer__body__pagination.right').click()",
-                "window.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight'}))",
-                "document.querySelector('[aria-label=\"next\"]').click()",
-            ]
-            
-            for script in scripts:
-                try:
-                    self.driver.execute_script(script)
-                    time.sleep(1)
-                    break
-                except:
-                    pass
-                    
-        except Exception:
-            pass
-
-    def _aggressive_next_page(self):
-        """積極嘗試翻頁（組合多種方法）"""
-        try:
-            self.driver.switch_to.default_content()
-            
-            # 1. 先嘗試按 ESC 關閉任何可能的彈窗
-            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            time.sleep(0.5)
-            
-            # 2. 嘗試多種鍵盤組合
-            key_combinations = [
-                Keys.ARROW_RIGHT,
-                Keys.PAGE_DOWN,
-                Keys.SPACE,
-                'd',  # 有些閱讀器用 d 鍵
-                'n',  # 有些用 n 表示 next
-            ]
-            
-            for key in key_combinations:
-                ActionChains(self.driver).send_keys(key).perform()
-                time.sleep(0.3)
-            
-            # 3. 嘗試點擊多個位置
-            click_positions = [
-                (0.9, 0.5),  # 右側中間
-                (0.95, 0.5), # 更右側
-                (0.8, 0.8),  # 右下角
-                (0.5, 0.9),  # 底部中間
-            ]
-            
-            for x_ratio, y_ratio in click_positions:
-                try:
-                    self.driver.execute_script(f"""
-                        var event = new MouseEvent('click', {{
-                            view: window,
-                            bubbles: true,
-                            cancelable: true,
-                            clientX: window.innerWidth * {x_ratio},
-                            clientY: window.innerHeight * {y_ratio}
-                        }});
-                        document.body.dispatchEvent(event);
-                    """)
-                    time.sleep(0.3)
-                except:
-                    pass
-            
-        except Exception:
-            pass
-
-    def _retry_failed_pages(self, failed_pages):
-        """重試失敗的頁面"""
-        retry_success = []
-        
-        for page_num in failed_pages[:20]:
-            if (self.output_dir / f"page_{page_num:04d}.png").exists():
-                retry_success.append(page_num)
-                continue
-            
-            print(f"重試第 {page_num} 頁...", end=" ")
-            
-            time.sleep(5)
-            
-            self.iframe_switched = False
-            self.find_and_switch_to_ebook_iframe()
-            
-            if self.capture_page_with_retry(page_num, max_retries=5):
-                print("✅")
-                retry_success.append(page_num)
-            else:
-                print("最後嘗試...", end=" ")
-                self._refresh_current_page()
-                time.sleep(5)
-                if self.capture_page_with_retry(page_num, max_retries=2):
-                    print("✅")
-                    retry_success.append(page_num)
-                else:
-                    print("❌")
-        
-        if retry_success:
-            print(f"✅ 重試成功: {len(retry_success)} 頁")
-
-    def _refresh_current_page(self):
-        """重新載入當前頁面內容"""
-        try:
-            self.driver.switch_to.default_content()
-            
-            refresh_buttons = [
-                "button.refresh",
-                "button[title*='refresh']",
-                "*[class*='refresh']"
-            ]
-            
-            for selector in refresh_buttons:
-                try:
-                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if btn.is_displayed():
-                        btn.click()
-                        time.sleep(2)
-                        return
-                except:
-                    pass
-            
-            try:
-                self.driver.execute_script("""
-                    var iframe = document.querySelector('iframe[id^="epubjs-view-"]');
-                    if (iframe) {
-                        iframe.src = iframe.src;
-                    }
-                """)
-                time.sleep(3)
-            except:
-                pass
-                
-        except Exception as e:
-            logger.error(f"重新載入頁面失敗: {e}")
-
-    def _close_popups(self):
-        """關閉彈出視窗"""
-        try:
-            # 檢查完成閱讀的彈窗
-            completion_selectors = [
-                "//div[contains(text(), '本書已閱讀完畢')]",
-                "//button[contains(text(), '擁不為完讀')]",
-                "//button[text()='分享']"
-            ]
-            
-            for selector in completion_selectors:
-                try:
-                    element = self.driver.find_element(By.XPATH, selector)
-                    if element.is_displayed():
-                        logger.info("發現「本書已閱讀完畢」提示，書籍已讀完")
-                        self.book_completed = True
-                        return
-                except:
-                    pass
-        except:
-            pass
-        
-        # 一般彈窗關閉邏輯
-        popup_selectors = [
-            ("//div[@id='UiObj-model' and contains(@style, 'display: block')]", ".//button[contains(@class, 'close')]"),
-            ("//div[contains(@class, 'popup') and contains(@style, 'display: block')]", ".//button[contains(@class, 'close')]"),
-            ("//div[contains(@class, 'modal') and contains(@style, 'display: block')]", ".//button[contains(@class, 'close')]"),
-        ]
-        
-        for popup_xpath, close_xpath in popup_selectors:
-            try:
-                popup = self.driver.find_element(By.XPATH, popup_xpath)
-                if popup.is_displayed():
-                    try:
-                        close_btn = popup.find_element(By.XPATH, close_xpath)
-                        close_btn.click()
-                        time.sleep(0.3)
-                    except:
-                        ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-                        time.sleep(0.3)
-            except:
-                continue
+        print(f"✅ 成功: {actual_pages} 頁")
+        if failed_pages:
+            print(f"❌ 失敗: {len(failed_pages)} 頁")
+            print(f"失敗頁面: {failed_pages[:20]}")
+        print(f"📁 儲存位置: {self.output_dir}")
 
     def print_execution_summary(self):
         """輸出執行摘要"""
